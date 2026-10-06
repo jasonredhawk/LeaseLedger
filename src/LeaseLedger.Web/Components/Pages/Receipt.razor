@@ -1,0 +1,8 @@
+@page "/receipts/{ReceiptNumber}"
+@rendermode AppRenderMode.Interactive
+
+<ReceiptView ReceiptNumber="@ReceiptNumber" />
+
+@code {
+    [Parameter] public string ReceiptNumber { get; set; } = "";
+}

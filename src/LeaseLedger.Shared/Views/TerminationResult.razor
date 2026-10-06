@@ -1,0 +1,37 @@
+@if (Result is not null)
+{
+    <section class="panel">
+        @if (Result.IsValid && Result.TerminationDate is DateOnly termination)
+        {
+            <p class="banner ok">Termination date <strong>@TextFormat.Date(termination)</strong>, @Result.NoticeDays days after the notice date.</p>
+            <button type="button" @onclick="OnSave">Keep this worksheet</button>
+            <ul>
+                @foreach (var warning in Result.Warnings)
+                {
+                    <li>@warning</li>
+                }
+            </ul>
+        }
+        else
+        {
+            <ul class="errors">
+                @foreach (var message in Result.Errors)
+                {
+                    <li>@message</li>
+                }
+            </ul>
+        }
+        <p>@Result.Explanation</p>
+        <p class="muted">@Result.Disclaimer</p>
+        @if (!string.IsNullOrEmpty(Saved))
+        {
+            <p class="banner ok">@Saved</p>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public TerminationPreviewDto? Result { get; set; }
+    [Parameter] public EventCallback OnSave { get; set; }
+    [Parameter] public string? Saved { get; set; }
+}

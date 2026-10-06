@@ -1,0 +1,106 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>@OfficialForms.Find(NoticeKind.N3).Label · LeaseLedger</PageTitle>
+
+<FormWithPdf Kind="NoticeKind.N3">
+
+<header class="page-head">
+    <h1>@OfficialForms.Find(NoticeKind.N3).Label</h1>
+    <p>@NoticeCopy.Disclaimer</p>
+</header>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+<section class="panel">
+    <EditForm Model="form" OnValidSubmit="Preview">
+        <div class="fields">
+            <label class="check"><InputCheckbox @bind-Value="form.IncreasingRent" /> The rent is increasing too</label>
+            <label>Proposed rent <InputNumber @bind-Value="form.ProposedRent" /></label>
+            <label>Current care and meals <InputNumber @bind-Value="form.CurrentCareAndMeals" /></label>
+            <label>Proposed care and meals <InputNumber @bind-Value="form.ProposedCareAndMeals" /></label>
+            <label>Notice date <InputDate @bind-Value="form.NoticeDate" /></label>
+            <label>Effective date <InputDate @bind-Value="form.EffectiveDate" /></label>
+        </div>
+        <button type="submit">Calculate</button>
+    </EditForm>
+</section>
+
+@if (result is not null)
+{
+    <section class="panel">
+        @if (result.IsValid)
+        {
+            <p class="banner ok">
+                @if (result.NewRent is decimal rent)
+                {
+                    <span>New rent @TextFormat.Money(rent). </span>
+                }
+                @if (result.NewCareAndMeals is decimal care)
+                {
+                    <span>Care and meals @TextFormat.Money(care).</span>
+                }
+            </p>
+            <button type="button" @onclick="Save">Keep this worksheet</button>
+        }
+        else
+        {
+            <ul class="errors">
+                @foreach (var message in result.Errors)
+                {
+                    <li>@message</li>
+                }
+            </ul>
+        }
+        <p>@result.Explanation</p>
+        <p class="muted">@result.Disclaimer</p>
+        @if (!string.IsNullOrEmpty(saved))
+        {
+            <p class="banner ok">@saved</p>
+        }
+    </section>
+}
+
+</FormWithPdf>
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+
+    private readonly N3PreviewRequest form = new()
+    {
+        NoticeDate = DateOnly.FromDateTime(DateTime.Today),
+        EffectiveDate = DateOnly.FromDateTime(DateTime.Today).AddDays(90)
+    };
+    private N3PreviewDto? result;
+    private string? error;
+    private string? saved;
+
+    private async Task Preview()
+    {
+        error = null;
+        saved = null;
+        try
+        {
+            result = await Client.PreviewN3Async(TenancyId, form);
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task Save()
+    {
+        try
+        {
+            var notice = await Client.SaveN3Async(TenancyId, form);
+            saved = $"Worksheet kept ({OfficialForms.Find(NoticeKind.N3).Label}).";
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

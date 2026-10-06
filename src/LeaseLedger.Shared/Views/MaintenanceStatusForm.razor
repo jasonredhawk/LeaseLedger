@@ -1,0 +1,49 @@
+@inject ILeaseLedgerClient Client
+
+<EditForm Model="form" OnValidSubmit="Save">
+    <div class="fields">
+        <label>Status
+            <InputSelect @bind-Value="form.Status">
+                @foreach (var status in Enum.GetValues<MaintenanceStatus>())
+                {
+                    <option value="@status">@status</option>
+                }
+            </InputSelect>
+        </label>
+        <label>Note <InputText @bind-Value="form.Note" /></label>
+    </div>
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="banner" role="alert">@error</p>
+    }
+    <button type="submit">Record status</button>
+</EditForm>
+
+@code {
+    [Parameter] public Guid RequestId { get; set; }
+    [Parameter] public MaintenanceStatus Current { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private readonly UpdateMaintenanceStatusRequest form = new();
+    private string? error;
+
+    protected override void OnParametersSet()
+    {
+        form.Status = Current;
+    }
+
+    private async Task Save()
+    {
+        error = null;
+        try
+        {
+            await Client.UpdateMaintenanceStatusAsync(RequestId, form);
+            form.Note = "";
+            await OnSaved.InvokeAsync();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

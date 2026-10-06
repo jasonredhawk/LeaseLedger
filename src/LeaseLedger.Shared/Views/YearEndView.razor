@@ -1,0 +1,121 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>Year-end receipt · LeaseLedger</PageTitle>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+@if (missing)
+{
+    <p class="empty">That tenancy was not found.</p>
+}
+else if (statement is null)
+{
+    <p class="muted">Loading the year…</p>
+}
+else
+{
+    <header class="page-head">
+        <h1>@statement.Year rent receipt</h1>
+        <p>@statement.TenantName · @statement.Street, unit @statement.UnitLabel, @statement.City</p>
+    </header>
+
+    <section class="panel no-print">
+        <EditForm Model="form" OnValidSubmit="Load">
+            <div class="fields">
+                <label>Calendar year <InputNumber @bind-Value="form.Year" /></label>
+            </div>
+            <button type="submit">Show year</button>
+        </EditForm>
+    </section>
+
+    <section class="stat-row">
+        <article class="stat">
+            <span>Rent charged</span>
+            <strong>@TextFormat.Money(statement.RentCharged)</strong>
+        </article>
+        <article class="stat">
+            <span>Other and NSF</span>
+            <strong>@TextFormat.Money(statement.OtherCharged + statement.NsfCharged)</strong>
+        </article>
+        <article class="stat">
+            <span>Payments received</span>
+            <strong>@TextFormat.Money(statement.Payments)</strong>
+        </article>
+    </section>
+
+    @if (statement.Lines.Count == 0)
+    {
+        <p class="empty">Nothing was posted in @statement.Year.</p>
+    }
+    else
+    {
+        <table class="ledger">
+            <thead>
+                <tr>
+                    <th>Date</th>
+                    <th>Item</th>
+                    <th>Amount</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var line in statement.Lines)
+                {
+                    <tr>
+                        <td>@TextFormat.Date(line.EffectiveDate)</td>
+                        <td>
+                            @line.Description
+                            @if (line.ReceiptNumber is not null)
+                            {
+                                <a href="@($"/receipts/{line.ReceiptNumber}")">@line.ReceiptNumber</a>
+                            }
+                        </td>
+                        <td class="@(line.Kind == LedgerEntryKind.Payment ? "credit" : "")">
+                            @(line.Kind == LedgerEntryKind.Payment ? "−" : "")@TextFormat.Money(line.Amount)
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+
+    <p class="muted">This summary is for the tenant's records. It is not a tax form.</p>
+}
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+    [Parameter] public int Year { get; set; }
+
+    private readonly YearForm form = new();
+    private YearEndDto? statement;
+    private bool missing;
+    private string? error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        form.Year = Year == 0 ? DateTime.Today.Year : Year;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        error = null;
+        missing = false;
+        try
+        {
+            statement = await Client.GetYearEndAsync(TenancyId, form.Year);
+            missing = statement is null;
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private sealed class YearForm
+    {
+        public int Year { get; set; }
+    }
+}

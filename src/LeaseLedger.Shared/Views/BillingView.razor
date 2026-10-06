@@ -1,0 +1,109 @@
+@inject ILeaseLedgerClient Client
+@inject NavigationManager Navigation
+
+<PageTitle>Billing · LeaseLedger</PageTitle>
+
+<header class="page-head">
+    <h1>Notices plan</h1>
+    <p>Worksheets stay available without a payment. A $60 worksheet fee and a $29 monthly notices plan are optional Stripe Checkout charges. Sales tax is not collected here.</p>
+</header>
+
+@if (!string.IsNullOrEmpty(message))
+{
+    <p class="banner ok">@message</p>
+}
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+@if (plan is null)
+{
+    <p class="muted">Loading the plan…</p>
+}
+else
+{
+    <section class="panel">
+        <p>Plan status <strong>@plan.Status</strong></p>
+        @if (!plan.CheckoutConfigured)
+        {
+            <p>Card checkout needs a Stripe secret key on the server. The ledger, e-transfer instructions, and notice worksheets still work.</p>
+        }
+        else
+        {
+            <p class="actions">
+                <button type="button" @onclick='() => Start("plan")'>Start notices plan · $29/month</button>
+                <button type="button" class="secondary" @onclick='() => Start("form")'>Pay $60 worksheet fee</button>
+                @if (plan.Status == "Active")
+                {
+                    <button type="button" class="secondary" @onclick='() => Start("portal")'>Manage billing</button>
+                }
+            </p>
+        }
+    </section>
+}
+
+@code {
+    private PlanDto? plan;
+    private string? message;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var sessionId = QueryValue("session_id");
+        if (!string.IsNullOrWhiteSpace(sessionId))
+        {
+            try
+            {
+                var confirmed = await Client.ConfirmCheckoutAsync(sessionId);
+                message = confirmed.Message;
+            }
+            catch (LeaseLedgerException exception)
+            {
+                error = exception.Message;
+            }
+        }
+
+        try
+        {
+            plan = await Client.GetPlanAsync();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task Start(string kind)
+    {
+        error = null;
+        try
+        {
+            var start = await Client.StartCheckoutAsync(new StartCheckoutRequest
+            {
+                Kind = kind,
+                ReturnUrl = Navigation.ToAbsoluteUri("/billing").GetLeftPart(UriPartial.Query).TrimEnd('?')
+            });
+            message = start.Message;
+            if (start.Configured && !string.IsNullOrWhiteSpace(start.Url))
+                Navigation.NavigateTo(start.Url, forceLoad: true);
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private string? QueryValue(string name)
+    {
+        var query = Navigation.ToAbsoluteUri(Navigation.Uri).Query.TrimStart('?');
+        foreach (var part in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            var pieces = part.Split('=', 2);
+            if (pieces.Length == 2 && pieces[0] == name)
+                return Uri.UnescapeDataString(pieces[1]);
+        }
+
+        return null;
+    }
+}

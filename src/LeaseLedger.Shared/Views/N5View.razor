@@ -1,0 +1,77 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>@OfficialForms.Find(NoticeKind.N5).Label · LeaseLedger</PageTitle>
+
+<FormWithPdf Kind="NoticeKind.N5">
+
+<header class="page-head">
+    <h1>@OfficialForms.Find(NoticeKind.N5).Label</h1>
+    <p>@NoticeCopy.Disclaimer</p>
+</header>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+<section class="panel">
+    <EditForm Model="form" OnValidSubmit="Preview">
+        <div class="fields">
+            <label>Notice date <InputDate @bind-Value="form.NoticeDate" /></label>
+            <label>Reason
+                <InputSelect @bind-Value="form.Reason">
+                    <option value="@N5Reason.Interference">Interference</option>
+                    <option value="@N5Reason.Damage">Damage</option>
+                    <option value="@N5Reason.Overcrowding">Overcrowding</option>
+                </InputSelect>
+            </label>
+            <label class="check"><InputCheckbox @bind-Value="form.SecondNotice" /> Second N5 within 6 months</label>
+            @if (form.SecondNotice)
+            {
+                <label>First N5 date <InputDate @bind-Value="form.FirstNoticeDate" /></label>
+            }
+            <label>What happened <InputText @bind-Value="form.Details" /></label>
+        </div>
+        <button type="submit">Calculate</button>
+    </EditForm>
+</section>
+
+<TerminationResult Result="result" OnSave="Save" Saved="@saved" />
+
+</FormWithPdf>
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+
+    private readonly N5PreviewRequest form = new() { NoticeDate = DateOnly.FromDateTime(DateTime.Today) };
+    private TerminationPreviewDto? result;
+    private string? error;
+    private string? saved;
+
+    private async Task Preview()
+    {
+        error = null;
+        saved = null;
+        try
+        {
+            result = await Client.PreviewN5Async(TenancyId, form);
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task Save()
+    {
+        try
+        {
+            var notice = await Client.SaveN5Async(TenancyId, form);
+            saved = $"Worksheet kept ({OfficialForms.Find(NoticeKind.N5).Label}).";
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

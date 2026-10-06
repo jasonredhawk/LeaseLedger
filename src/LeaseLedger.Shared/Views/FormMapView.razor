@@ -1,0 +1,204 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>Map form · LeaseLedger</PageTitle>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+@if (!string.IsNullOrEmpty(saved))
+{
+    <p class="banner ok">@saved</p>
+}
+
+@if (missing)
+{
+    <p class="empty">That form was not found.</p>
+}
+else if (rows is null)
+{
+    <p class="muted">Loading fields…</p>
+}
+else
+{
+    <header class="page-head">
+        <h1>@name</h1>
+        <p>Match each field to tenancy data, or type text that stays the same on every copy. Unmapped fields stay blank.</p>
+    </header>
+
+    <div class="form-workspace">
+    <EditForm Model="rows" OnValidSubmit="Save">
+        <label>Form name <InputText @bind-Value="name" /></label>
+        <table class="ledger form-map">
+            <thead>
+                <tr>
+                    <th>Field</th>
+                    <th>Fill with</th>
+                    <th>Format</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in rows)
+                {
+                    <tr>
+                        <td>
+                            <strong>@row.Label</strong>
+                            <span class="muted">@KindLabel(row.Kind)</span>
+                        </td>
+                        <td>
+                            @if (row.Kind == PdfFieldKind.Signature)
+                            {
+                                <span class="muted">Signature fields are left blank.</span>
+                            }
+                            else
+                            {
+                                <select @bind="row.Source" @bind:after="() => SourceChanged(row)">
+                                    <option value="">Leave blank</option>
+                                    @foreach (var token in PdfFieldCatalog.Tokens)
+                                    {
+                                        <option value="@token.Key">@token.Label</option>
+                                    }
+                                    <option value="fixed">Fixed text</option>
+                                </select>
+                                @if (row.Source == "fixed")
+                                {
+                                    <input @bind="row.ConstantValue" maxlength="500" placeholder="Same on every copy" />
+                                }
+                            }
+                        </td>
+                        <td>
+                            @if (ShowsFormat(row))
+                            {
+                                <select @bind="row.Format">
+                                    @if (TokenKind(row) == PdfTokenKind.Date)
+                                    {
+                                        <option value="@PdfValueFormat.Default">yyyy-MM-dd</option>
+                                        <option value="@PdfValueFormat.DateDayFirst">dd/MM/yyyy</option>
+                                        <option value="@PdfValueFormat.DateMonthFirst">MM/dd/yyyy</option>
+                                        <option value="@PdfValueFormat.DateYearSlash">yyyy/MM/dd</option>
+                                    }
+                                    else
+                                    {
+                                        <option value="@PdfValueFormat.Default">$1,234.56</option>
+                                        <option value="@PdfValueFormat.PlainDecimal">1234.56</option>
+                                    }
+                                </select>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        <p class="actions">
+            <button type="submit" disabled="@busy">@(busy ? "Saving…" : "Save mapping")</button>
+            <a class="button secondary" href="/forms">All forms</a>
+        </p>
+    </EditForm>
+    <PdfFormAside File="preview" TemplateId="TemplateId" Title="Form" ShowMapLink="false" OfferUpload="false" />
+    </div>
+}
+
+@code {
+    [Parameter] public Guid TemplateId { get; set; }
+
+    private string name = "";
+    private List<FieldRow>? rows;
+    private PdfFileDto? preview;
+    private bool missing;
+    private bool busy;
+    private string? error;
+    private string? saved;
+
+    protected override async Task OnParametersSetAsync() => await Load();
+
+    private async Task Load()
+    {
+        error = null;
+        saved = null;
+        var template = await Client.GetPdfTemplateAsync(TemplateId);
+        if (template is null)
+        {
+            missing = true;
+            rows = null;
+            return;
+        }
+
+        missing = false;
+        name = template.Name;
+        preview = await Client.GetPdfTemplateFileAsync(TemplateId);
+        rows = template.Fields.Select(field => new FieldRow
+        {
+            Id = field.Id,
+            Label = string.IsNullOrWhiteSpace(field.Label) ? field.Name : field.Label,
+            Kind = field.Kind,
+            Source = field.ConstantValue is not null ? "fixed" : field.DataKey ?? "",
+            ConstantValue = field.ConstantValue ?? "",
+            Format = field.Format
+        }).ToList();
+    }
+
+    private async Task Save()
+    {
+        if (rows is null)
+            return;
+
+        error = null;
+        saved = null;
+        busy = true;
+        try
+        {
+            var updated = await Client.UpdatePdfTemplateAsync(TemplateId, new UpdatePdfTemplateRequest
+            {
+                Name = name,
+                Fields = rows.Select(row => new PdfFieldMappingRequest
+                {
+                    FieldId = row.Id,
+                    DataKey = row.Kind == PdfFieldKind.Signature || row.Source is "" or "fixed" ? null : row.Source,
+                    ConstantValue = row.Kind == PdfFieldKind.Signature || row.Source != "fixed" ? null : row.ConstantValue,
+                    Format = row.Format
+                }).ToList()
+            });
+            name = updated.Name;
+            saved = "Mapping saved.";
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static void SourceChanged(FieldRow row)
+    {
+        if (row.Source != "fixed")
+            row.ConstantValue = "";
+        if (TokenKind(row) is not PdfTokenKind.Date and not PdfTokenKind.Money)
+            row.Format = PdfValueFormat.Default;
+    }
+
+    private static bool ShowsFormat(FieldRow row) => TokenKind(row) is PdfTokenKind.Date or PdfTokenKind.Money;
+
+    private static PdfTokenKind? TokenKind(FieldRow row) => PdfFieldCatalog.Find(row.Source)?.Kind;
+
+    private static string KindLabel(PdfFieldKind kind) => kind switch
+    {
+        PdfFieldKind.Checkbox => "Checkbox",
+        PdfFieldKind.Radio => "Radio",
+        PdfFieldKind.Choice => "Choice",
+        PdfFieldKind.Signature => "Signature",
+        _ => "Text"
+    };
+
+    private sealed class FieldRow
+    {
+        public Guid Id { get; set; }
+        public string Label { get; set; } = "";
+        public PdfFieldKind Kind { get; set; }
+        public string Source { get; set; } = "";
+        public string ConstantValue { get; set; } = "";
+        public PdfValueFormat Format { get; set; }
+    }
+}

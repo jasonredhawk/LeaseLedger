@@ -1,0 +1,65 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>@OfficialForms.Find(NoticeKind.N7).Label · LeaseLedger</PageTitle>
+
+<FormWithPdf Kind="NoticeKind.N7">
+
+<header class="page-head">
+    <h1>@OfficialForms.Find(NoticeKind.N7).Label</h1>
+    <p>@NoticeCopy.Disclaimer</p>
+</header>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+<section class="panel">
+    <EditForm Model="form" OnValidSubmit="Preview">
+        <div class="fields">
+            <label>Notice date <InputDate @bind-Value="form.NoticeDate" /></label>
+            <label>Serious problem <InputText @bind-Value="form.Details" /></label>
+        </div>
+        <button type="submit">Calculate</button>
+    </EditForm>
+</section>
+
+<TerminationResult Result="result" OnSave="Save" Saved="@saved" />
+
+</FormWithPdf>
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+
+    private readonly N7PreviewRequest form = new() { NoticeDate = DateOnly.FromDateTime(DateTime.Today) };
+    private TerminationPreviewDto? result;
+    private string? error;
+    private string? saved;
+
+    private async Task Preview()
+    {
+        error = null;
+        saved = null;
+        try
+        {
+            result = await Client.PreviewN7Async(TenancyId, form);
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task Save()
+    {
+        try
+        {
+            var notice = await Client.SaveN7Async(TenancyId, form);
+            saved = $"Worksheet kept ({OfficialForms.Find(NoticeKind.N7).Label}).";
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

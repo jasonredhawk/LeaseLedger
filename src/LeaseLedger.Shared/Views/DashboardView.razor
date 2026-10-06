@@ -1,0 +1,181 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>Home · LeaseLedger</PageTitle>
+
+@if (dashboard is null)
+{
+    <p class="muted">Loading your ledger…</p>
+}
+else
+{
+    <header class="page-head">
+        <h1>@(dashboard.Role == AppRoles.Landlord ? "Landlord home" : "Your tenancy")</h1>
+        <p>@dashboard.DisplayName</p>
+    </header>
+
+    <section class="stat-row">
+        <article class="stat">
+            <span>Arrears</span>
+            <strong>@TextFormat.Money(dashboard.TotalArrears)</strong>
+        </article>
+        <article class="stat">
+            <span>Open maintenance</span>
+            <strong>@dashboard.OpenMaintenanceCount</strong>
+        </article>
+        @if (dashboard.NextDueDate is DateOnly due)
+        {
+            <article class="stat">
+                <span>Next rent due</span>
+                <strong>@TextFormat.Date(due)</strong>
+            </article>
+        }
+    </section>
+
+    @if (dashboard.Tenancies.Count == 0)
+    {
+        <p class="empty">
+            @if (dashboard.Role == AppRoles.Landlord)
+            {
+                <span>No tenancies yet. Add a property, a unit, and a tenant invite.</span>
+            }
+            else
+            {
+                <span>No tenancy is linked to this email yet. When your landlord invites this address, it will show up here.</span>
+            }
+        </p>
+    }
+    else
+    {
+        <p class="muted">Tenancies are grouped by property. Each one shows the last five rents that have come due. On time means the payment that cleared it landed on or before the due date.</p>
+        <div class="property-groups">
+            @foreach (var property in GroupByProperty(dashboard.Tenancies))
+            {
+                <section class="property-group">
+                    <header class="property-group-head">
+                        <h2>@property.Street</h2>
+                        @if (!string.IsNullOrWhiteSpace(property.City))
+                        {
+                            <p class="muted">@property.City</p>
+                        }
+                    </header>
+                    <ul class="card-list">
+                        @foreach (var tenancy in property.Tenancies)
+                        {
+                            <li>
+                                <a class="card" href="@($"/tenancies/{tenancy.Id}")">
+                                    <span class="card-title">@tenancy.TenantName</span>
+                                    <span>Unit @tenancy.UnitLabel · @TextFormat.Money(tenancy.RentAmount)</span>
+                                    <span class="rent-score @ScoreClass(tenancy.RecentRent)">@TextFormat.RentRating(tenancy.RecentRent)</span>
+                                    @if (tenancy.RecentRent.Count > 0)
+                                    {
+                                        <span class="rent-chips">
+                                            @foreach (var period in tenancy.RecentRent)
+                                            {
+                                                <span class="rent-chip @ChipClass(period.Timeliness)" title="@TextFormat.RentPeriodDetail(period)">@TextFormat.RentPeriodChip(period)</span>
+                                            }
+                                        </span>
+                                    }
+                                    <strong class="@(tenancy.Balance > 0 ? "owing" : "")">@TextFormat.Balance(tenancy.Balance)</strong>
+                                </a>
+                            </li>
+                        }
+                    </ul>
+                </section>
+            }
+        </div>
+    }
+}
+
+@code {
+    private DashboardDto? dashboard;
+
+    protected override async Task OnInitializedAsync()
+    {
+        dashboard = await Client.GetDashboardAsync();
+    }
+
+    private static string ScoreClass(IReadOnlyList<RentPeriodDto> periods)
+    {
+        if (periods.Count == 0)
+            return "";
+        if (periods.Any(period => period.Timeliness == RentTimeliness.Unpaid))
+            return "poor";
+        if (periods.Any(period => period.Timeliness == RentTimeliness.Late))
+            return "mixed";
+        return "good";
+    }
+
+    private static string ChipClass(RentTimeliness timeliness) => timeliness switch
+    {
+        RentTimeliness.OnTime => "on-time",
+        RentTimeliness.Late => "late",
+        _ => "unpaid"
+    };
+
+    private static IReadOnlyList<PropertyTenancyGroup> GroupByProperty(IReadOnlyList<TenancySummaryDto> tenancies) =>
+        tenancies
+            .GroupBy(tenancy => tenancy.PropertyId)
+            .Select(group =>
+            {
+                var property = group.First();
+                return new PropertyTenancyGroup(
+                    property.PropertyStreet,
+                    property.City,
+                    group
+                        .OrderBy(tenancy => tenancy.UnitLabel, UnitLabelComparer.Instance)
+                        .ThenBy(tenancy => tenancy.TenantName, StringComparer.OrdinalIgnoreCase)
+                        .ToList());
+            })
+            .OrderBy(group => group.Street, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(group => group.City, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+    private sealed record PropertyTenancyGroup(string Street, string City, IReadOnlyList<TenancySummaryDto> Tenancies);
+
+    private sealed class UnitLabelComparer : IComparer<string>
+    {
+        public static readonly UnitLabelComparer Instance = new();
+
+        public int Compare(string? left, string? right)
+        {
+            left ??= "";
+            right ??= "";
+            var leftIndex = 0;
+            var rightIndex = 0;
+            while (leftIndex < left.Length && rightIndex < right.Length)
+            {
+                if (char.IsDigit(left[leftIndex]) && char.IsDigit(right[rightIndex]))
+                {
+                    var leftValue = ReadNumber(left, ref leftIndex);
+                    var rightValue = ReadNumber(right, ref rightIndex);
+                    var numberCompare = leftValue.CompareTo(rightValue);
+                    if (numberCompare != 0)
+                        return numberCompare;
+                }
+                else
+                {
+                    var charCompare = char.ToUpperInvariant(left[leftIndex]).CompareTo(char.ToUpperInvariant(right[rightIndex]));
+                    if (charCompare != 0)
+                        return charCompare;
+                    leftIndex++;
+                    rightIndex++;
+                }
+            }
+
+            return (left.Length - leftIndex).CompareTo(right.Length - rightIndex);
+        }
+
+        private static long ReadNumber(string value, ref int index)
+        {
+            long number = 0;
+            while (index < value.Length && char.IsDigit(value[index]))
+            {
+                number = number * 10 + (value[index] - '0');
+                index++;
+            }
+
+            return number;
+        }
+    }
+
+}

@@ -1,0 +1,9 @@
+@page "/tenancies/{TenancyId:guid}/year/{Year:int}"
+@rendermode AppRenderMode.Interactive
+
+<YearEndView TenancyId="@TenancyId" Year="@Year" />
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+    [Parameter] public int Year { get; set; }
+}

@@ -1,0 +1,127 @@
+@inject ILeaseLedgerClient Client
+
+<div>
+    @if (!string.IsNullOrWhiteSpace(Notice.ServiceNote))
+    {
+        <p>Service record: @Notice.ServiceNote. This is a delivery note, not proof of legal service.</p>
+    }
+    @if (!string.IsNullOrWhiteSpace(Notice.AcknowledgedBy))
+    {
+        <p>Typed acknowledgement: @Notice.AcknowledgedBy</p>
+    }
+    @if (!string.IsNullOrWhiteSpace(Notice.ReferredTo))
+    {
+        <p>Referred to @Notice.ReferredTo</p>
+    }
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="banner" role="alert">@error</p>
+    }
+    @if (user?.Role == AppRoles.Landlord)
+    {
+        <EditForm Model="service" OnValidSubmit="RecordService">
+            <div class="fields">
+                <label>How it was given
+                    <InputSelect @bind-Value="service.Method">
+                        <option value="@ServiceMethod.InPerson">In person</option>
+                        <option value="@ServiceMethod.Mail">Mail</option>
+                        <option value="@ServiceMethod.Courier">Courier</option>
+                        <option value="@ServiceMethod.Email">Email</option>
+                    </InputSelect>
+                </label>
+                <label>Date <InputDate @bind-Value="service.ServedOn" /></label>
+                <label>Note <InputText @bind-Value="service.Note" /></label>
+            </div>
+            <button type="submit">Save service record</button>
+        </EditForm>
+        @if (contacts.Count > 0)
+        {
+            <div class="actions">
+                <label>Refer to
+                    <select @bind="contactId">
+                        @foreach (var contact in contacts)
+                        {
+                            <option value="@contact.Id">@contact.Name</option>
+                        }
+                    </select>
+                </label>
+                <button type="button" class="secondary" @onclick="Refer">Refer worksheet</button>
+            </div>
+        }
+        else
+        {
+            <p class="muted"><a href="/legal">Add a legal contact</a> before referring this worksheet.</p>
+        }
+    }
+    else if (user?.Role == AppRoles.Tenant && string.IsNullOrWhiteSpace(Notice.AcknowledgedBy))
+    {
+        <EditForm Model="acknowledgement" OnValidSubmit="Acknowledge">
+            <label>Type your name <InputText @bind-Value="acknowledgement.SignedName" /></label>
+            <button type="submit">Acknowledge this worksheet</button>
+        </EditForm>
+    }
+</div>
+
+@code {
+    [Parameter] public NoticeRecordDto Notice { get; set; } = null!;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private CurrentUserDto? user;
+    private IReadOnlyList<LegalContactDto> contacts = [];
+    private readonly RecordServiceRequest service = new() { ServedOn = DateOnly.FromDateTime(DateTime.Today) };
+    private readonly AcknowledgeNoticeRequest acknowledgement = new();
+    private Guid contactId;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = await Client.GetCurrentUserAsync();
+        if (user?.Role == AppRoles.Landlord)
+        {
+            contacts = await Client.GetLegalContactsAsync();
+            contactId = contacts.FirstOrDefault()?.Id ?? Guid.Empty;
+        }
+    }
+
+    private async Task RecordService()
+    {
+        error = null;
+        try
+        {
+            await Client.RecordNoticeServiceAsync(Notice.Id, service);
+            await OnChanged.InvokeAsync();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task Acknowledge()
+    {
+        error = null;
+        try
+        {
+            await Client.AcknowledgeNoticeAsync(Notice.Id, acknowledgement);
+            await OnChanged.InvokeAsync();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task Refer()
+    {
+        error = null;
+        try
+        {
+            await Client.ReferNoticeAsync(Notice.Id, contactId);
+            await OnChanged.InvokeAsync();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

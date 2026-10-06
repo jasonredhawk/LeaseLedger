@@ -1,0 +1,317 @@
+@inject ILeaseLedgerClient Client
+@inject IJSRuntime JS
+
+<PageTitle>Ledger · LeaseLedger</PageTitle>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+@if (missing)
+{
+    <p class="empty">That tenancy was not found.</p>
+}
+else if (detail is null)
+{
+    <p class="muted">Loading the ledger…</p>
+}
+else
+{
+    <header class="page-head">
+        <h1>@detail.PropertyStreet, unit @detail.UnitLabel</h1>
+        <p>@detail.TenantName · @detail.TenantEmail @(detail.TenantLinked ? "" : "(invite not accepted yet)")</p>
+    </header>
+
+    <section class="stat-row">
+        <article class="stat">
+            <span>Balance</span>
+            <strong class="@(detail.Balance > 0 ? "owing" : "")">@TextFormat.Balance(detail.Balance)</strong>
+        </article>
+        <article class="stat">
+            <span>Rent</span>
+            <strong>@TextFormat.Money(detail.RentAmount) · @TextFormat.Frequency(detail.Frequency)</strong>
+        </article>
+        <article class="stat">
+            <span>Started</span>
+            <strong>@TextFormat.Date(detail.StartDate)</strong>
+        </article>
+    </section>
+
+    <p class="actions">
+        @if (detail.CanManageLedger)
+        {
+            @if (!showFill)
+            {
+                <button type="button" class="secondary" @onclick="OpenFill">Fill a PDF</button>
+            }
+        }
+        <a class="button secondary" href="@($"/tenancies/{detail.Id}/year/{DateTime.Today.Year}")">Year-end receipt</a>
+        <a class="button secondary" href="@($"/units/{detail.UnitId}/inspections")">Inspections</a>
+        <a class="button secondary" href="@($"/tenancies/{detail.Id}/insurance")">Insurance</a>
+        <a class="button secondary" href="@MapLink" target="_blank" rel="noopener">Map</a>
+    </p>
+
+    @if (detail.CanManageLedger)
+    {
+        <section class="panel">
+            <h2>Notice helpers</h2>
+            <ul class="notice-list">
+                @foreach (var form in OfficialForms.All)
+                {
+                    <li>
+                        <a href="@($"/notices/{form.Path}/{detail.Id}")">
+                            <span class="form-code">@form.Kind</span>
+                            <span>@form.Title</span>
+                        </a>
+                    </li>
+                }
+            </ul>
+        </section>
+    }
+
+    @if (detail.CanManageLedger && showFill)
+    {
+        <div class="@(showPdf ? "form-workspace" : null)">
+            <section class="panel">
+                <div class="pdf-panel-bar">
+                    <h2>Fill a PDF</h2>
+                    <button type="button" class="secondary" @onclick="CloseFill">Close</button>
+                </div>
+                @if (templates.Count == 0)
+                {
+                    <p class="muted">Upload a PDF template in the panel. It can then be filled for this tenancy.</p>
+                }
+                else
+                {
+                    <div class="fields">
+                        <label>Template
+                            <select @bind="selectedTemplate">
+                                <option value="@Guid.Empty">Choose a form</option>
+                                @foreach (var template in templates)
+                                {
+                                    <option value="@template.Id">@template.Name</option>
+                                }
+                            </select>
+                        </label>
+                    </div>
+                    <button type="button" disabled="@(filling || selectedTemplate == Guid.Empty)" @onclick="DownloadPdf">@(filling ? "Preparing…" : "Download filled PDF")</button>
+                }
+            </section>
+            @if (showPdf)
+            {
+                <PdfFormAside TemplateId="PreviewTemplateId" OfferUpload="templates.Count == 0" OnUploaded="TemplateUploaded" />
+            }
+        </div>
+    }
+    @if (notices.Count > 0)
+    {
+        <section class="panel">
+            <h2>Saved worksheets</h2>
+            <ul class="plain">
+                @foreach (var notice in notices)
+                {
+                    <li>
+                        <strong>@OfficialForms.Find(notice.Kind).Label</strong>
+                        · notice @TextFormat.Date(notice.NoticeDate)
+                        @if (notice.ResultDate is DateOnly resultDate)
+                        {
+                            <span>· @TextFormat.Date(resultDate)</span>
+                        }
+                        <p>@notice.Summary</p>
+                        <NoticeFollowUp Notice="notice" OnChanged="Reload" />
+                    </li>
+                }
+            </ul>
+            <p class="muted">@NoticeCopy.Disclaimer</p>
+        </section>
+    }
+    @if (receiptReady is not null)
+    {
+        <p class="banner ok">Payment saved. <a href="@($"/receipts/{receiptReady}")">Open receipt @receiptReady</a></p>
+    }
+
+    <table class="ledger">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Item</th>
+                <th>Amount</th>
+            </tr>
+        </thead>
+        <tbody>
+            @foreach (var line in detail.Lines)
+            {
+                <tr>
+                    <td>@TextFormat.Date(line.EffectiveDate)</td>
+                    <td>
+                        @line.Description
+                        @if (line.ReceiptNumber is not null)
+                        {
+                            <a href="@($"/receipts/{line.ReceiptNumber}")">@line.ReceiptNumber</a>
+                        }
+                    </td>
+                    <td class="@(line.Kind == LedgerEntryKind.Payment ? "credit" : "")">
+                        @(line.Kind == LedgerEntryKind.Payment ? "−" : "")@TextFormat.Money(line.Amount)
+                    </td>
+                </tr>
+            }
+        </tbody>
+    </table>
+
+    <PaymentsPanel TenancyId="detail.Id" />
+
+    @if (detail.CanManageLedger)
+    {
+        <div class="split">
+            <section class="panel">
+                <h2>Add a charge</h2>
+                <EditForm Model="charge" OnValidSubmit="AddCharge">
+                    <div class="fields">
+                        <label>Type
+                            <InputSelect @bind-Value="charge.Category">
+                                <option value="@ChargeCategory.Rent">Rent</option>
+                                <option value="@ChargeCategory.Nsf">NSF</option>
+                                <option value="@ChargeCategory.Other">Other</option>
+                            </InputSelect>
+                        </label>
+                        <label>Amount <InputNumber @bind-Value="charge.Amount" /></label>
+                        <label>Date <InputDate @bind-Value="charge.EffectiveDate" /></label>
+                        <label>Note <InputText @bind-Value="charge.Note" /></label>
+                    </div>
+                    <button type="submit">Post charge</button>
+                </EditForm>
+            </section>
+            <section class="panel">
+                <h2>Record a payment</h2>
+                <EditForm Model="payment" OnValidSubmit="AddPayment">
+                    <div class="fields">
+                        <label>Method
+                            <InputSelect @bind-Value="payment.Method">
+                                <option value="@PaymentMethod.ETransfer">E-transfer</option>
+                                <option value="@PaymentMethod.Cash">Cash</option>
+                                <option value="@PaymentMethod.Cheque">Cheque</option>
+                                <option value="@PaymentMethod.Other">Other</option>
+                            </InputSelect>
+                        </label>
+                        <label>Amount <InputNumber @bind-Value="payment.Amount" /></label>
+                        <label>Date <InputDate @bind-Value="payment.EffectiveDate" /></label>
+                        <label>Note <InputText @bind-Value="payment.Note" /></label>
+                    </div>
+                    <button type="submit">Save payment and receipt</button>
+                </EditForm>
+            </section>
+        </div>
+    }
+}
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+
+    private TenancyDetailDto? detail;
+    private IReadOnlyList<NoticeRecordDto> notices = [];
+    private IReadOnlyList<PdfTemplateSummaryDto> templates = [];
+    private Guid selectedTemplate;
+    private bool showFill;
+    private bool filling;
+    private bool missing;
+    private string? error;
+    private readonly RecordChargeRequest charge = new() { EffectiveDate = DateOnly.FromDateTime(DateTime.Today), Category = ChargeCategory.Rent };
+    private readonly RecordPaymentRequest payment = new() { EffectiveDate = DateOnly.FromDateTime(DateTime.Today), Method = PaymentMethod.ETransfer };
+
+    protected override async Task OnParametersSetAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        error = null;
+        missing = false;
+        detail = await Client.GetTenancyAsync(TenancyId);
+        missing = detail is null;
+        notices = missing ? [] : await Client.GetNoticesAsync(TenancyId);
+        templates = detail?.CanManageLedger == true ? await Client.GetPdfTemplatesAsync() : [];
+        if (selectedTemplate != Guid.Empty && templates.All(template => template.Id != selectedTemplate))
+            selectedTemplate = Guid.Empty;
+    }
+
+    private async Task AddCharge()
+    {
+        try
+        {
+            await Client.RecordChargeAsync(TenancyId, charge);
+            charge.Amount = 0;
+            charge.Note = "";
+            await Reload();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task AddPayment()
+    {
+        try
+        {
+            var receipt = await Client.RecordPaymentAsync(TenancyId, payment);
+            payment.Amount = 0;
+            payment.Note = "";
+            await Reload();
+            error = null;
+            receiptReady = receipt.ReceiptNumber;
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task DownloadPdf()
+    {
+        if (selectedTemplate == Guid.Empty)
+        {
+            error = "Choose a form template.";
+            return;
+        }
+
+        error = null;
+        filling = true;
+        try
+        {
+            var file = await Client.FillPdfTemplateAsync(selectedTemplate, TenancyId);
+            await JS.InvokeVoidAsync("leaseLedgerDownload", file.FileName, file.Content);
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+        finally
+        {
+            filling = false;
+        }
+    }
+
+    private bool showPdf => templates.Count == 0 || selectedTemplate != Guid.Empty;
+
+    private Guid? PreviewTemplateId => selectedTemplate == Guid.Empty ? null : selectedTemplate;
+
+    private void OpenFill()
+    {
+        showFill = true;
+        if (selectedTemplate == Guid.Empty && templates.Count == 1)
+            selectedTemplate = templates[0].Id;
+    }
+
+    private void CloseFill() => showFill = false;
+
+    private async Task TemplateUploaded(Guid id)
+    {
+        await Reload();
+        selectedTemplate = id;
+    }
+
+    private string? receiptReady;
+
+    private string MapLink => detail is null
+        ? "https://www.google.com/maps"
+        : "https://www.google.com/maps/search/?api=1&query=" + Uri.EscapeDataString($"{detail.PropertyStreet}, {detail.City}");
+}

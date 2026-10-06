@@ -1,0 +1,90 @@
+@inject ILeaseLedgerClient Client
+@inject NavigationManager Navigation
+
+<section class="panel" id="payments">
+    <h2>Pay the balance</h2>
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="banner" role="alert">@error</p>
+    }
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <p class="banner ok">@message</p>
+    }
+    @if (instructions is null)
+    {
+        <p class="muted">Loading payment instructions…</p>
+    }
+    else
+    {
+        <p>Amount due <strong>@TextFormat.Money(instructions.AmountDue)</strong></p>
+        <p>E-transfer to <strong>@instructions.LandlordEmail</strong> with reference <strong>@instructions.Reference</strong>. LeaseLedger does not move Interac funds.</p>
+        <p>@instructions.PadNote</p>
+        @if (instructions.PadAuthorized)
+        {
+            <p class="banner ok">A pre-authorized debit consent is on file. The bank debit is still set up outside this app.</p>
+        }
+        else if (user?.Role == AppRoles.Tenant)
+        {
+            <EditForm Model="pad" OnValidSubmit="Authorize">
+                <label>Type your name to record debit consent <InputText @bind-Value="pad.SignedName" /></label>
+                <button type="submit">Save consent</button>
+            </EditForm>
+        }
+        <p class="actions">
+            <button type="button" @onclick="PayCard">Pay the balance by card</button>
+        </p>
+    }
+</section>
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+
+    private CurrentUserDto? user;
+    private PaymentInstructionsDto? instructions;
+    private readonly AcknowledgeNoticeRequest pad = new();
+    private string? error;
+    private string? message;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        user = await Client.GetCurrentUserAsync();
+        instructions = await Client.GetPaymentInstructionsAsync(TenancyId);
+    }
+
+    private async Task Authorize()
+    {
+        error = null;
+        try
+        {
+            await Client.AuthorizePadAsync(TenancyId, pad);
+            instructions = await Client.GetPaymentInstructionsAsync(TenancyId);
+            message = "Consent saved.";
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task PayCard()
+    {
+        error = null;
+        try
+        {
+            var start = await Client.StartCheckoutAsync(new StartCheckoutRequest
+            {
+                Kind = "rent",
+                TenancyId = TenancyId,
+                ReturnUrl = Navigation.ToAbsoluteUri("/billing").GetLeftPart(UriPartial.Path)
+            });
+            message = start.Message;
+            if (start.Configured && !string.IsNullOrWhiteSpace(start.Url))
+                Navigation.NavigateTo(start.Url, forceLoad: true);
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

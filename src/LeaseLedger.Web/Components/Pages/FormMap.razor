@@ -1,0 +1,8 @@
+@page "/forms/{TemplateId:guid}"
+@rendermode AppRenderMode.Interactive
+
+<FormMapView TemplateId="TemplateId" />
+
+@code {
+    [Parameter] public Guid TemplateId { get; set; }
+}

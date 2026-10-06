@@ -1,0 +1,48 @@
+@inject ILeaseLedgerClient Client
+@inject IJSRuntime Js
+
+<PageTitle>Receipt · LeaseLedger</PageTitle>
+
+@if (missing)
+{
+    <p class="empty">That receipt was not found.</p>
+}
+else if (receipt is null)
+{
+    <p class="muted">Loading the receipt…</p>
+}
+else
+{
+    <article class="receipt">
+        <p class="eyebrow">Rent receipt</p>
+        <h1>@receipt.ReceiptNumber</h1>
+        <p>@TextFormat.Date(receipt.PaidOn)</p>
+        <dl>
+            <div><dt>Received from</dt><dd>@receipt.TenantName</dd></div>
+            <div><dt>For</dt><dd>@receipt.Street, unit @receipt.UnitLabel, @receipt.City</dd></div>
+            <div><dt>Method</dt><dd>@TextFormat.Method(receipt.Method)</dd></div>
+            <div><dt>Amount</dt><dd>@TextFormat.Money(receipt.Amount)</dd></div>
+            @if (!string.IsNullOrWhiteSpace(receipt.Note))
+            {
+                <div><dt>Note</dt><dd>@receipt.Note</dd></div>
+            }
+        </dl>
+        <p class="muted">This receipt records a payment entered by the landlord. It is not a tax form.</p>
+    </article>
+    <p class="no-print"><button type="button" @onclick="Print">Print</button></p>
+}
+
+@code {
+    [Parameter] public string ReceiptNumber { get; set; } = "";
+
+    private ReceiptDto? receipt;
+    private bool missing;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        receipt = await Client.GetReceiptAsync(ReceiptNumber);
+        missing = receipt is null;
+    }
+
+    private Task Print() => Js.InvokeVoidAsync("print").AsTask();
+}

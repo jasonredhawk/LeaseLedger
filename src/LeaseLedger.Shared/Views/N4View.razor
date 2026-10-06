@@ -1,0 +1,95 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>@OfficialForms.Find(NoticeKind.N4).Label · LeaseLedger</PageTitle>
+
+<FormWithPdf Kind="NoticeKind.N4">
+
+<header class="page-head">
+    <h1>@OfficialForms.Find(NoticeKind.N4).Label</h1>
+    <p>@NoticeCopy.Disclaimer</p>
+</header>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+<section class="panel">
+    <EditForm Model="form" OnValidSubmit="Preview">
+        <div class="fields">
+            <label>Notice date <InputDate @bind-Value="form.NoticeDate" /></label>
+        </div>
+        <button type="submit">Calculate from the ledger</button>
+    </EditForm>
+</section>
+
+@if (result is not null)
+{
+    <section class="panel">
+        <p>Arrears on the ledger <strong>@TextFormat.Money(result.Arrears)</strong></p>
+        @if (result.IsValid && result.TerminationDate is DateOnly termination)
+        {
+            <p class="banner ok">Termination date <strong>@TextFormat.Date(termination)</strong>, @result.NoticeDays days after the notice date.</p>
+            <button type="button" @onclick="Save">Keep this worksheet</button>
+            <ul>
+                @foreach (var warning in result.Warnings)
+                {
+                    <li>@warning</li>
+                }
+            </ul>
+        }
+        else
+        {
+            <ul class="errors">
+                @foreach (var message in result.Errors)
+                {
+                    <li>@message</li>
+                }
+            </ul>
+        }
+        <p class="muted">@result.Disclaimer</p>
+        @if (saved is not null)
+        {
+            <p class="banner ok">@saved</p>
+        }
+    </section>
+}
+
+</FormWithPdf>
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+
+    private readonly N4PreviewRequest form = new() { NoticeDate = DateOnly.FromDateTime(DateTime.Today) };
+    private N4PreviewDto? result;
+    private string? error;
+    private string? saved;
+
+    private async Task Preview()
+    {
+        error = null;
+        saved = null;
+        try
+        {
+            result = await Client.PreviewN4Async(TenancyId, form);
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task Save()
+    {
+        error = null;
+        try
+        {
+            await Client.SaveN4Async(TenancyId, form);
+            saved = "Worksheet saved on this tenancy. It is still not an official form.";
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

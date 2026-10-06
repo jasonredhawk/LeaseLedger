@@ -1,0 +1,86 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>Insurance · LeaseLedger</PageTitle>
+
+<header class="page-head">
+    <h1>Tenant insurance</h1>
+    <p>A request, an active policy, or a cancellation. This is a record for the tenancy, not a broker sale.</p>
+</header>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+@if (current is not null)
+{
+    <section class="panel">
+        <p><strong>@current.Status</strong> · @current.BrokerName</p>
+        @if (!string.IsNullOrWhiteSpace(current.PolicyNumber))
+        {
+            <p>Policy @current.PolicyNumber</p>
+        }
+        <p>@(current.LandlordListed ? "Landlord is listed." : "Landlord is not listed.")</p>
+        @if (!string.IsNullOrWhiteSpace(current.Note))
+        {
+            <p>@current.Note</p>
+        }
+    </section>
+}
+
+<section class="panel">
+    <h2>Update the record</h2>
+    <EditForm Model="form" OnValidSubmit="Save">
+        <div class="fields">
+            <label>Status
+                <InputSelect @bind-Value="form.Status">
+                    @if (user?.Role == AppRoles.Tenant)
+                    {
+                        <option value="@InsuranceStatus.Requested">Requested</option>
+                        <option value="@InsuranceStatus.Cancelled">Cancelled</option>
+                    }
+                    else
+                    {
+                        <option value="@InsuranceStatus.Active">Active</option>
+                        <option value="@InsuranceStatus.Cancelled">Cancelled</option>
+                    }
+                </InputSelect>
+            </label>
+            <label>Broker or insurer <InputText @bind-Value="form.BrokerName" /></label>
+            <label>Policy number <InputText @bind-Value="form.PolicyNumber" /></label>
+            <label class="check"><InputCheckbox @bind-Value="form.LandlordListed" /> Landlord listed on the policy</label>
+            <label>Note <InputText @bind-Value="form.Note" /></label>
+        </div>
+        <button type="submit">Save insurance record</button>
+    </EditForm>
+</section>
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+
+    private CurrentUserDto? user;
+    private InsuranceRecordDto? current;
+    private readonly SaveInsuranceRequest form = new();
+    private string? error;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        user = await Client.GetCurrentUserAsync();
+        form.Status = user?.Role == AppRoles.Tenant ? InsuranceStatus.Requested : InsuranceStatus.Active;
+        current = await Client.GetInsuranceAsync(TenancyId);
+    }
+
+    private async Task Save()
+    {
+        error = null;
+        try
+        {
+            current = await Client.SaveInsuranceAsync(TenancyId, form);
+            form.Note = "";
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

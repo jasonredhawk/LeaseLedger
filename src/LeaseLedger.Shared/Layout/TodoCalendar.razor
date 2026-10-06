@@ -1,0 +1,111 @@
+@using System.Globalization
+
+<section class="todo-cal" aria-label="Calendar">
+    <div class="cal-nav">
+        <button type="button" class="cal-shift" @onclick="() => OnMonth.InvokeAsync(Month.AddMonths(-1))" aria-label="Previous month">‹</button>
+        <strong>@Month.ToString("MMMM yyyy", Canada)</strong>
+        <button type="button" class="linkish" @onclick="OnToday" aria-label="Show today">Today</button>
+        <button type="button" class="cal-shift" @onclick="() => OnMonth.InvokeAsync(Month.AddMonths(1))" aria-label="Next month">›</button>
+    </div>
+
+    <div class="cal-grid">
+        @foreach (var name in DayNames)
+        {
+            <span class="cal-dow">@name</span>
+        }
+        @foreach (var day in TodoAgent.MonthDays(Month))
+        {
+            var kinds = OpenKinds(day);
+            var inMonth = day.Month == Month.Month;
+            <button type="button"
+                    class="@DayClass(day, inMonth)"
+                    aria-label="@DayLabel(day, kinds)"
+                    @onclick="() => OnSelect.InvokeAsync(day)">
+                <span>@day.Day</span>
+                <span class="cal-dots">
+                    @foreach (var kind in kinds)
+                    {
+                        <span class="cal-dot @TodoAgent.KindClass(kind)"></span>
+                    }
+                </span>
+            </button>
+        }
+    </div>
+
+    <ul class="kind-legend" aria-label="Action types">
+        @foreach (var kind in TodoAgent.KindOrder)
+        {
+            <li><span class="cal-dot @TodoAgent.KindClass(kind)"></span> @TodoAgent.KindLabel(kind)</li>
+        }
+    </ul>
+
+    <div class="cal-day-list">
+        <p class="todo-kind">@Selected.ToString("dddd, MMMM d", Canada)</p>
+        @if (SelectedItems.Count == 0)
+        {
+            <p class="muted">Nothing due this day.</p>
+        }
+        else
+        {
+            <TodoList Items="SelectedItems" Today="Today" HighlightKey="HighlightKey" OnToggle="OnToggle" OnOpen="OnOpen" OnDate="OnSelect" OnDelete="OnDelete" OnUpdate="OnUpdate" />
+        }
+
+        @if (Overdue.Count > 0)
+        {
+            <p class="todo-kind">Overdue</p>
+            <TodoList Items="Overdue" Today="Today" HighlightKey="HighlightKey" OnToggle="OnToggle" OnOpen="OnOpen" OnDate="OnSelect" OnDelete="OnDelete" OnUpdate="OnUpdate" />
+        }
+    </div>
+</section>
+
+@code {
+    private static readonly string[] DayNames = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+    private static readonly CultureInfo Canada = CultureInfo.GetCultureInfo("en-CA");
+
+    [Parameter, EditorRequired] public IReadOnlyList<TodoItem> Items { get; set; } = [];
+    [Parameter, EditorRequired] public DateOnly Month { get; set; }
+    [Parameter, EditorRequired] public DateOnly Selected { get; set; }
+    [Parameter] public DateOnly Today { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    [Parameter] public string? HighlightKey { get; set; }
+    [Parameter] public EventCallback<DateOnly> OnSelect { get; set; }
+    [Parameter] public EventCallback<DateOnly> OnMonth { get; set; }
+    [Parameter] public EventCallback OnToday { get; set; }
+    [Parameter] public EventCallback<string> OnToggle { get; set; }
+    [Parameter] public EventCallback<TodoItem> OnOpen { get; set; }
+    [Parameter] public EventCallback<string> OnDelete { get; set; }
+    [Parameter] public EventCallback<TodoItem> OnUpdate { get; set; }
+
+    private List<TodoItem> SelectedItems =>
+        Items.Where(item => !item.Done && item.Due == Selected).OrderBy(item => item.Title, StringComparer.OrdinalIgnoreCase).ToList();
+
+    private List<TodoItem> Overdue =>
+        Selected >= Today
+            ? Items.Where(item => !item.Done && item.Due < Today && item.Due != Selected).OrderBy(item => item.Due).ToList()
+            : [];
+
+    private List<TodoKind> OpenKinds(DateOnly day) =>
+        TodoAgent.KindOrder.Where(kind => Items.Any(item => !item.Done && item.Due == day && item.Kind == kind)).ToList();
+
+    private string DayClass(DateOnly day, bool inMonth)
+    {
+        var classes = new List<string> { "cal-day" };
+        if (!inMonth)
+            classes.Add("is-muted");
+        if (day == Today)
+            classes.Add("is-today");
+        if (day == Selected)
+            classes.Add("is-selected");
+        return string.Join(' ', classes);
+    }
+
+    private string DayLabel(DateOnly day, IReadOnlyList<TodoKind> kinds)
+    {
+        var label = day.ToString("MMMM d", Canada);
+        if (kinds.Count == 0)
+            return label;
+
+        var count = Items.Count(item => !item.Done && item.Due == day);
+        var names = string.Join(", ", kinds.Select(TodoAgent.KindLabel));
+        return $"{label}, {count} open: {names}";
+    }
+}

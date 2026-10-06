@@ -1,0 +1,211 @@
+@inject ILeaseLedgerClient Client
+@inject NavigationManager Navigation
+
+<PageTitle>Forms · LeaseLedger</PageTitle>
+
+<header class="page-head">
+    <h1>Forms</h1>
+    <p>Keep a fillable PDF for each form. Open one when you want to view it or add the template, then match its fields to a tenancy.</p>
+</header>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+@if (templates is null)
+{
+    <p class="muted">Loading forms…</p>
+}
+else
+{
+    <div class="@(viewerOpen ? "form-workspace" : null)">
+        <div class="form-main">
+            <section class="panel">
+                <h2>Official forms</h2>
+                <ul class="form-catalog">
+                    @foreach (var form in OfficialForms.All)
+                    {
+                        var template = templates.FirstOrDefault(item => item.NoticeKind == form.Kind);
+                        <li>
+                            <button type="button" class="form-pick @(selectedKind == form.Kind ? "is-selected" : "")" @onclick="() => SelectOfficial(form.Kind)">
+                                <span class="form-code">@form.Kind</span>
+                                <strong>@form.Title</strong>
+                                <span class="muted">@(template is null ? "Needs a PDF" : template.FileName)</span>
+                            </button>
+                            @if (template is not null)
+                            {
+                                <button type="button" class="secondary" @onclick="() => Delete(template)">Delete</button>
+                            }
+                        </li>
+                    }
+                </ul>
+            </section>
+
+            <section class="panel">
+                <h2>Other PDFs</h2>
+                @if (custom.Count == 0)
+                {
+                    <p class="muted">No other PDF templates yet.</p>
+                }
+                else
+                {
+                    <ul class="form-catalog">
+                        @foreach (var template in custom)
+                        {
+                            <li>
+                                <button type="button" class="form-pick @(selectedId == template.Id ? "is-selected" : "")" @onclick="() => SelectCustom(template.Id)">
+                                    <strong>@template.Name</strong>
+                                    <span class="muted">@template.FieldCount fields · @template.FileName</span>
+                                </button>
+                                <button type="button" class="secondary" @onclick="() => Delete(template)">Delete</button>
+                            </li>
+                        }
+                    </ul>
+                }
+            </section>
+
+            @if (!showUpload)
+            {
+                <p class="actions">
+                    <button type="button" class="secondary" @onclick="() => showUpload = true">Upload a PDF</button>
+                </p>
+            }
+            else
+            {
+                <section class="panel">
+                    <h2>Upload a PDF</h2>
+                    <EditForm Model="upload" OnValidSubmit="Upload">
+                        <div class="fields">
+                            <label>Name <InputText @bind-Value="upload.Name" placeholder="Lease agreement" /></label>
+                            <label>PDF
+                                <InputFile OnChange="ChooseFile" accept="application/pdf,.pdf" />
+                            </label>
+                        </div>
+                        <p class="muted">The PDF needs standard form fields. Scanned pages and XFA forms are skipped. Files must be 8 MB or smaller.</p>
+                        <p class="actions">
+                            <button type="submit" disabled="@busy">@(busy ? "Reading fields…" : "Upload and scan")</button>
+                            <button type="button" class="secondary" @onclick="() => showUpload = false">Cancel</button>
+                        </p>
+                    </EditForm>
+                </section>
+            }
+        </div>
+        @if (viewerOpen)
+        {
+            <PdfFormAside Kind="selectedKind" TemplateId="selectedId" Revision="revision" OnUploaded="Uploaded" OnClose="CloseViewer" />
+        }
+    </div>
+}
+
+@code {
+    private readonly UploadPdfTemplateRequest upload = new();
+    private IReadOnlyList<PdfTemplateSummaryDto>? templates;
+    private NoticeKind? selectedKind;
+    private Guid? selectedId;
+    private bool showUpload;
+    private int revision;
+
+    private bool viewerOpen => selectedKind is not null || selectedId is not null;
+    private string? error;
+    private bool busy;
+    private IBrowserFile? chosen;
+
+    private IReadOnlyList<PdfTemplateSummaryDto> custom =>
+        templates?.Where(template => template.NoticeKind is null).ToList() ?? [];
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload() => templates = await Client.GetPdfTemplatesAsync();
+
+    private void SelectOfficial(NoticeKind kind)
+    {
+        selectedKind = kind;
+        selectedId = null;
+    }
+
+    private void SelectCustom(Guid id)
+    {
+        selectedKind = null;
+        selectedId = id;
+    }
+
+    private void CloseViewer()
+    {
+        selectedKind = null;
+        selectedId = null;
+    }
+
+    private async Task Uploaded(Guid id)
+    {
+        await Reload();
+        if (selectedKind is null)
+            selectedId = id;
+    }
+
+    private void ChooseFile(InputFileChangeEventArgs change)
+    {
+        chosen = change.File;
+        if (string.IsNullOrWhiteSpace(upload.Name))
+            upload.Name = Path.GetFileNameWithoutExtension(change.File.Name);
+    }
+
+    private async Task Upload()
+    {
+        error = null;
+        if (chosen is null)
+        {
+            error = "Choose a PDF.";
+            return;
+        }
+
+        if (chosen.Size > PdfFormLimits.MaxBytes)
+        {
+            error = "That PDF is larger than 8 MB.";
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            await using var stream = chosen.OpenReadStream(PdfFormLimits.MaxBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            upload.FileName = chosen.Name;
+            upload.Content = buffer.ToArray();
+            upload.NoticeKind = null;
+            var saved = await Client.UploadPdfTemplateAsync(upload);
+            Navigation.NavigateTo($"/forms/{saved.Id}");
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+        catch (IOException)
+        {
+            error = "That PDF is larger than 8 MB.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task Delete(PdfTemplateSummaryDto template)
+    {
+        error = null;
+        try
+        {
+            await Client.DeletePdfTemplateAsync(template.Id);
+            if (selectedId == template.Id || template.NoticeKind is NoticeKind kind && selectedKind == kind)
+                CloseViewer();
+
+            revision++;
+            await Reload();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

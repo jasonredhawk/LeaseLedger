@@ -1,0 +1,7 @@
+@page "/tenancies/{TenancyId:guid}"
+
+<TenancyView TenancyId="@TenancyId" />
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+}

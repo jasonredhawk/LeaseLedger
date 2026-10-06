@@ -1,0 +1,126 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>Maintenance · LeaseLedger</PageTitle>
+
+<header class="page-head">
+    <h1>Maintenance</h1>
+    <p>Each status change is timestamped so the timeline can be shown later.</p>
+</header>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+@if (user?.Role == AppRoles.Tenant)
+{
+    <section class="panel">
+        <h2>New request</h2>
+        @if (tenancies.Count == 0)
+        {
+            <p class="muted">A request needs a tenancy linked to your email.</p>
+        }
+        else
+        {
+            <EditForm Model="form" OnValidSubmit="Create">
+                <div class="fields">
+                    @if (tenancies.Count > 1)
+                    {
+                        <label>Tenancy
+                            <InputSelect @bind-Value="form.TenancyId">
+                                @foreach (var tenancy in tenancies)
+                                {
+                                    <option value="@tenancy.Id">@tenancy.PropertyStreet, unit @tenancy.UnitLabel</option>
+                                }
+                            </InputSelect>
+                        </label>
+                    }
+                    <label>Title <InputText @bind-Value="form.Title" /></label>
+                    <label>What needs attention <InputTextArea @bind-Value="form.Description" /></label>
+                </div>
+                <button type="submit">Submit request</button>
+            </EditForm>
+        }
+    </section>
+}
+
+@if (requests is null)
+{
+    <p class="muted">Loading requests…</p>
+}
+else if (requests.Count == 0)
+{
+    <p class="empty">No maintenance requests.</p>
+}
+else
+{
+    @foreach (var request in requests)
+    {
+        <article class="panel">
+            <h2>@request.Title</h2>
+            <p>@request.PropertyStreet, unit @request.UnitLabel · @request.Status</p>
+            <p>@request.Description</p>
+            <ol class="timeline">
+                @foreach (var evt in request.Events)
+                {
+                    <li>
+                        <strong>@evt.Status</strong>
+                        <span>@TextFormat.When(evt.OccurredAt)</span>
+                        @if (!string.IsNullOrWhiteSpace(evt.Note))
+                        {
+                            <p>@evt.Note</p>
+                        }
+                    </li>
+                }
+            </ol>
+            <WorkOrderForm RequestId="request.Id" Title="@request.Title" Order="request.WorkOrder" CanAssign="request.CanUpdateStatus" OnSaved="Reload" />
+            @if (request.CanUpdateStatus)
+            {
+                <MaintenanceStatusForm RequestId="request.Id" Current="request.Status" OnSaved="Reload" />
+            }
+        </article>
+    }
+}
+
+@code {
+    private CurrentUserDto? user;
+    private IReadOnlyList<MaintenanceRequestDto>? requests;
+    private IReadOnlyList<TenancySummaryDto> tenancies = [];
+    private readonly CreateMaintenanceRequest form = new();
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        user = await Client.GetCurrentUserAsync();
+        if (user?.Role == AppRoles.Tenant)
+        {
+            var dashboard = await Client.GetDashboardAsync();
+            tenancies = dashboard.Tenancies;
+            if (tenancies.Count > 0)
+                form.TenancyId = tenancies[0].Id;
+        }
+
+        await Reload();
+    }
+
+    private async Task Reload()
+    {
+        requests = await Client.GetMaintenanceAsync();
+    }
+
+    private async Task Create()
+    {
+        try
+        {
+            await Client.CreateMaintenanceAsync(form);
+            form.Title = "";
+            form.Description = "";
+            await Reload();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+}

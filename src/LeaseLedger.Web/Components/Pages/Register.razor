@@ -1,0 +1,78 @@
+@page "/register"
+@layout AuthLayout
+@inject IAccountGateway Accounts
+@inject UserManager<AppUser> UserManager
+@inject SignInManager<AppUser> SignInManager
+@inject NavigationManager Navigation
+
+<h1>Create an account</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+<EditForm Model="Input" OnValidSubmit="Create" FormName="register" method="post">
+    <DataAnnotationsValidator />
+    <div class="fields">
+        <label>Name <InputText @bind-Value="Input.DisplayName" /></label>
+        <label>Email <InputText @bind-Value="Input.Email" autocomplete="username" /></label>
+        <label>Password <InputText type="password" @bind-Value="Input.Password" autocomplete="new-password" /></label>
+        <label>I am a
+            <InputSelect @bind-Value="Input.Role">
+                <option value="@AppRoles.Landlord">Landlord</option>
+                <option value="@AppRoles.Tenant">Tenant</option>
+            </InputSelect>
+        </label>
+    </div>
+    <button type="submit">Create account</button>
+</EditForm>
+
+<p>Already registered? <a href="/login">Sign in</a></p>
+
+@code {
+    private RegisterInput input = new();
+
+    [SupplyParameterFromForm]
+    private RegisterInput Input
+    {
+        get => input;
+        set => input = value ?? new();
+    }
+
+    private string? error;
+
+    private async Task Create()
+    {
+        var outcome = await Accounts.RegisterAsync(new RegisterRequest
+        {
+            DisplayName = Input.DisplayName,
+            Email = Input.Email,
+            Password = Input.Password,
+            Role = Input.Role
+        });
+        if (!outcome.Succeeded || outcome.UserId is null)
+        {
+            error = outcome.Error;
+            return;
+        }
+
+        var user = await UserManager.FindByIdAsync(outcome.UserId.Value.ToString());
+        if (user is null)
+        {
+            error = "Registration failed.";
+            return;
+        }
+
+        await SignInManager.SignInAsync(user, isPersistent: true);
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+
+    private sealed class RegisterInput
+    {
+        public string DisplayName { get; set; } = "";
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+        public string Role { get; set; } = AppRoles.Landlord;
+    }
+}

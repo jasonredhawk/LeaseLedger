@@ -1,0 +1,1217 @@
+@inject IAssistant Assistant
+@inject ILeaseLedgerClient Client
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+
+<aside class="agent-rail" aria-label="Ask LeaseLedger">
+    @if (!inChannel)
+    {
+        <div class="agent-scroll">
+            <section class="todo-agent" aria-label="To-do">
+                <div class="agent-list-head">
+                    <button type="button" class="linkish todo-open" @onclick="OpenTodos">To-do</button>
+                    <span class="todo-count">@(loaded ? $"{OpenCount} open" : "…")</span>
+                    <button type="button" class="linkish" @onclick="() => OpenCalendar(Today)">Calendar</button>
+                    <button type="button" class="linkish" @onclick="Review" disabled="@(!loaded || busy)">Review</button>
+                    <button type="button" class="linkish" @onclick="FindNewItems" disabled="@(!loaded || busy)" title="Review items you can add to the calendar">Update</button>
+                </div>
+
+                @if (!loaded)
+                {
+                    <p class="muted agent-empty">Checking rent, maintenance, and tenants…</p>
+                }
+                else if (OpenCount == 0)
+                {
+                    <p class="muted agent-empty">Nothing open. I track tenants, maintenance, and rent, and I add tasks from your other chats.</p>
+                }
+                else
+                {
+                    <TodoList Items="items" Today="Today" HighlightKey="highlightedKey" OnToggle="Toggle" OnOpen="OpenItem" OnDate="OpenCalendar" OnDelete="DeleteItem" OnUpdate="UpdateItem" />
+                }
+
+                @if (!string.IsNullOrEmpty(reviewNote))
+                {
+                    <p class="review-note">@reviewNote</p>
+                }
+                @if (DoneCount > 0)
+                {
+                    <button type="button" class="linkish todo-done" @onclick="OpenTodos">@DoneCount done</button>
+                }
+            </section>
+
+            <div class="agent-list-head">
+                <span>Conversations</span>
+                <button type="button" class="linkish" @onclick="StartNew">New</button>
+            </div>
+
+            @if (conversations.Count == 0)
+            {
+                <p class="muted agent-empty">No conversations yet. Send a message to start one.</p>
+            }
+            else
+            {
+                <ul class="agent-list">
+                    @foreach (var conversation in conversations.OrderByDescending(item => item.UpdatedAt))
+                    {
+                        <li @key="conversation.Id">
+                            <button type="button" class="agent-chat" @onclick="() => Open(conversation.Id)">
+                                <span class="agent-title">@conversation.Title</span>
+                                @if (!string.IsNullOrEmpty(conversation.Preview))
+                                {
+                                    <span class="agent-preview">@conversation.Preview</span>
+                                }
+                            </button>
+                        </li>
+                    }
+                </ul>
+            }
+        </div>
+    }
+    else if (inTodos)
+    {
+        <header class="agent-channel">
+            <button type="button" class="linkish" @onclick="Back">Back</button>
+            <strong>To-do</strong>
+            <button type="button" class="linkish channel-update" @onclick="FindNewItems" disabled="@busy" title="Review items you can add to the calendar">Update</button>
+        </header>
+
+        <div class="agent-thread" @ref="thread" aria-live="polite">
+            @if (!string.IsNullOrEmpty(reviewNote))
+            {
+                <p class="review-note">@reviewNote</p>
+            }
+            @if (items.Count == 0)
+            {
+                <p class="muted">Nothing is on the list yet. I track tenants, maintenance, and rent, and I read your other chats for tasks.</p>
+            }
+            else
+            {
+                <TodoList Items="items" InThread="true" ShowDone="true" Today="Today" HighlightKey="highlightedKey" OnToggle="Toggle" OnOpen="OpenItem" OnDate="OpenCalendar" OnDelete="DeleteItem" OnUpdate="UpdateItem" />
+            }
+            @if (todoNotes.Count == 0)
+            {
+                <p class="muted">Tell me a task, mark one done, or ask me to review the other chats.</p>
+            }
+            else
+            {
+                @foreach (var note in todoNotes)
+                {
+                    <article class="agent-turn @note.Role" @key="note.Id">
+                        <span class="agent-who">@(note.Role == "you" ? "You" : "To-do")</span>
+                        <p>@note.Text</p>
+                        @if (note.Replies.Count > 0)
+                        {
+                            <div class="agent-actions">
+                                @foreach (var reply in note.Replies)
+                                {
+                                    <button type="button" class="agent-reply" disabled="@(busy || !CanAnswer(note))" @onclick="() => AnswerTodo(reply)">@reply.Label</button>
+                                }
+                            </div>
+                        }
+                    </article>
+                }
+            }
+            @if (busy)
+            {
+                <p class="muted">Working…</p>
+            }
+        </div>
+    }
+    else if (inCalendar)
+    {
+        <header class="agent-channel">
+            <button type="button" class="linkish" @onclick="Back">Back</button>
+            <strong>Calendar</strong>
+            <button type="button" class="linkish channel-update" @onclick="FindNewItems" disabled="@busy" title="Review items you can add to the calendar">Update</button>
+        </header>
+
+        <div class="agent-thread" aria-live="polite">
+            @if (!string.IsNullOrEmpty(reviewNote))
+            {
+                <p class="review-note">@reviewNote</p>
+            }
+            <TodoCalendar Items="items"
+                          Month="calendarMonth"
+                          Selected="calendarDay"
+                          Today="Today"
+                          OnSelect="SelectDay"
+                          OnMonth="ShowMonth"
+                          OnToday="JumpToday"
+                          OnToggle="Toggle"
+                          OnOpen="OpenItem"
+                          OnDelete="DeleteItem"
+                          OnUpdate="UpdateItem"
+                          HighlightKey="highlightedKey" />
+            @if (busy)
+            {
+                <p class="muted">Working…</p>
+            }
+        </div>
+    }
+    else
+    {
+        <header class="agent-channel">
+            <button type="button" class="linkish" @onclick="Back">Back</button>
+            <strong>@(Active?.Title ?? "New chat")</strong>
+        </header>
+
+        <div class="agent-thread" @ref="thread" aria-live="polite">
+            @if (Active is null || Active.Turns.Count == 0)
+            {
+                <p class="muted">Send a name or a question. When I ask you to choose, tap a reply.</p>
+            }
+            else
+            {
+                @foreach (var turn in Active.Turns)
+                {
+                    <article class="agent-turn @turn.Role" @key="turn.Id">
+                        <span class="agent-who">@(turn.Role == "you" ? "You" : "LeaseLedger")</span>
+                        <p>@turn.Text</p>
+                        @foreach (var group in turn.Actions.GroupBy(action => action.Group ?? ""))
+                        {
+                            @if (!string.IsNullOrEmpty(group.Key))
+                            {
+                                <p class="agent-group">@group.Key</p>
+                            }
+                            <div class="agent-actions">
+                                @foreach (var action in group)
+                                {
+                                    <button type="button" class="@ActionClass(action)" disabled="@ActionDisabled(turn, action)" @onclick="() => Go(action)">@action.Label</button>
+                                }
+                            </div>
+                        }
+                        @if (turn.ActionId is not null && !turn.Confirmed)
+                        {
+                            <button type="button" class="agent-confirm" disabled="@busy" @onclick="() => Confirm(turn)">Confirm</button>
+                        }
+                        @foreach (var item in TodosFrom(turn))
+                        {
+                            <div class="todo-chip @TodoAgent.KindClass(item.Kind)" @key="item.Key">
+                                <button type="button" class="todo-chip-open" @onclick="() => ShowOnCalendar(item)">
+                                    <span>@item.Title</span>
+                                    <span class="todo-chip-when">@TodoAgent.ShortDate(item.Due, Today)</span>
+                                </button>
+                                <button type="button" class="todo-x" aria-label="@($"Delete {item.Title}")" @onclick="() => DeleteItem(item.Key)">×</button>
+                            </div>
+                        }
+                    </article>
+                }
+            }
+            @if (busy)
+            {
+                <p class="muted">Working…</p>
+            }
+        </div>
+    }
+
+    <form class="agent-compose" @onsubmit="Ask" @onsubmit:preventDefault="true">
+        <label for="ask-leaseledger">@ComposeLabel</label>
+        <input id="ask-leaseledger" @ref="composer" @bind="draft" @bind:event="oninput" placeholder="@ComposePlaceholder" autocomplete="off" disabled="@busy" />
+        <div class="agent-compose-actions">
+            <button type="submit" disabled="@busy">Send</button>
+            <button type="button" class="secondary" @onclick="Listen" disabled="@busy">Speak</button>
+        </div>
+    </form>
+</aside>
+
+@code {
+    private readonly List<Conversation> conversations = [];
+    private readonly List<TodoItem> items = [];
+    private readonly Dictionary<string, TodoOverride> overrides = new(StringComparer.Ordinal);
+    private readonly List<AgentNote> todoNotes = [];
+    private IReadOnlyList<TenancySummaryDto> tenancies = [];
+    private IReadOnlyList<MaintenanceRequestDto> maintenance = [];
+    private ElementReference thread;
+    private ElementReference composer;
+    private Guid? activeId;
+    private string draft = "";
+    private string? reviewNote;
+    private DateOnly? nextDue;
+    private bool stickToEnd;
+    private bool busy;
+    private bool loaded;
+    private bool inChannel;
+    private bool inTodos;
+    private bool inCalendar;
+    private DateOnly calendarDay = DateOnly.FromDateTime(DateTime.Today);
+    private DateOnly calendarMonth = new(DateTime.Today.Year, DateTime.Today.Month, 1);
+    private string? highlightedKey;
+    private Guid loadedFor;
+    private Guid loadingFor;
+    private bool ready;
+    private readonly SemaphoreSlim persistGate = new(1, 1);
+
+    [Parameter] public Guid UserId { get; set; }
+
+    private Conversation? Active => conversations.FirstOrDefault(conversation => conversation.Id == activeId);
+    private int OpenCount => items.Count(item => !item.Done);
+    private int DoneCount => items.Count - OpenCount;
+    private DateOnly Today => DateOnly.FromDateTime(DateTime.Today);
+    private string ComposeLabel => inCalendar ? "Calendar" : inTodos ? "To-do" : inChannel ? "Reply" : "New message";
+    private string ComposePlaceholder => inCalendar
+        ? $"Add a task for {calendarDay.ToString("MMMM d")}…"
+        : inTodos
+        ? "Add, rename, or delete a task…"
+        : inChannel ? "Continue this chat…" : "Start a chat…";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (UserId == Guid.Empty || UserId == loadedFor || UserId == loadingFor)
+            return;
+
+        var requested = UserId;
+        loadingFor = requested;
+        await LoadAccount(requested);
+        if (UserId == requested)
+            loadedFor = requested;
+        if (loadingFor == requested)
+            loadingFor = Guid.Empty;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!stickToEnd)
+            return;
+
+        stickToEnd = false;
+        try
+        {
+            await JS.InvokeVoidAsync("leaseLedgerScrollEnd", thread);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task Ask()
+    {
+        var text = await ReadComposer();
+        if (text.Length == 0 || busy)
+            return;
+
+        if (inTodos || inCalendar)
+        {
+            await AskTodo(text);
+            return;
+        }
+
+        await SubmitChat(text);
+    }
+
+    private Task SubmitChat(string text) => SubmitChat(text, null);
+
+    private async Task SubmitChat(string text, string? shown)
+    {
+        var conversation = EnsureActive();
+        inChannel = true;
+        var firstYou = conversation.Turns.All(turn => turn.Role != "you");
+        var history = conversation.Turns
+            .Select(turn => new AssistantTurn(turn.Role, turn.Text))
+            .ToArray();
+        var visible = string.IsNullOrWhiteSpace(shown) ? text : shown;
+        if (firstYou)
+            conversation.Title = TrimTitle(visible);
+
+        conversation.Turns.Add(new Turn("you", visible, [], null));
+        Absorb();
+        draft = "";
+        await ClearComposer();
+        busy = true;
+        stickToEnd = true;
+        try
+        {
+            var reply = await Assistant.AskAsync(new AssistantRequest(text, history, conversation.TenancyId));
+            await Apply(conversation, reply);
+        }
+        catch (LeaseLedgerException exception)
+        {
+            AddAgent(conversation, exception.Message, [], null);
+        }
+        finally
+        {
+            busy = false;
+            await Persist();
+            try
+            {
+                await composer.FocusAsync();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (JSException)
+            {
+            }
+        }
+    }
+
+    private Task AskTodo(string text) => AskTodo(text, null);
+
+    private async Task AskTodo(string text, string? shown)
+    {
+        if (TodoAgent.IsFindNewRequest(text))
+        {
+            draft = "";
+            await ClearComposer();
+            await FindNewItems();
+            return;
+        }
+
+        todoNotes.Add(new AgentNote("you", string.IsNullOrWhiteSpace(shown) ? text : shown));
+        draft = "";
+        await ClearComposer();
+        busy = true;
+        stickToEnd = true;
+        try
+        {
+            await ReloadLedger();
+            if (!TodoAgent.IsFindNewRequest(text))
+                Absorb();
+            var scheduled = inCalendar ? calendarDay : (DateOnly?)null;
+            var before = items.ToList();
+            var result = TodoAgent.Handle(text, items, tenancies, maintenance, Snapshots(), Today, nextDue, scheduled);
+            ApplyCommand(before, result);
+            Replace(Shape(result.Items));
+            AddTodoNote(result.Text, result.Replies);
+            reviewNote = FirstLine(result.Text);
+        }
+        finally
+        {
+            busy = false;
+            await Persist();
+            try
+            {
+                await composer.FocusAsync();
+            }
+            catch (InvalidOperationException)
+            {
+            }
+            catch (JSException)
+            {
+            }
+        }
+    }
+
+    private async Task<string> ReadComposer()
+    {
+        var text = draft.Trim();
+        try
+        {
+            var live = await JS.InvokeAsync<string>("leaseLedgerInputValue", composer);
+            if (!string.IsNullOrWhiteSpace(live))
+                text = live.Trim();
+        }
+        catch (JSException)
+        {
+        }
+
+        return text;
+    }
+
+    private async Task ClearComposer()
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("leaseLedgerSetInput", composer, "");
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task Confirm(Turn turn)
+    {
+        if (busy || turn.Confirmed || turn.ActionId is not Guid actionId)
+            return;
+
+        var conversation = conversations.FirstOrDefault(item => item.Turns.Contains(turn));
+        if (conversation is null)
+            return;
+
+        busy = true;
+        stickToEnd = true;
+        try
+        {
+            var reply = await Assistant.ConfirmAsync(actionId);
+            turn.Confirmed = true;
+            await Apply(conversation, reply);
+            await Refresh();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            AddAgent(conversation, exception.Message, [], null);
+        }
+        finally
+        {
+            busy = false;
+            await Persist();
+        }
+    }
+
+    private async Task Apply(Conversation conversation, AssistantReply reply)
+    {
+        conversation.TenancyId = reply.TenancyId;
+        var actions = new List<ChatAction>();
+        if (reply.Actions is not null)
+        {
+            foreach (var link in reply.Actions)
+                actions.Add(new ChatAction(link.Href, link.Label, false, link.TenancyId ?? reply.TenancyId, link.Group, link.Send));
+        }
+
+        if (actions.Count == 0 && !string.IsNullOrEmpty(reply.Href) && !string.IsNullOrEmpty(reply.LinkLabel))
+            actions.Add(new ChatAction(reply.Href, reply.LinkLabel, reply.External, reply.TenancyId, null));
+
+        AddAgent(conversation, reply.Text, actions, reply.Proposal);
+        if (!reply.External && !string.IsNullOrEmpty(reply.Href))
+            conversation.LastHref = reply.Href;
+        if (reply.Download is not null)
+            await Download(reply.Download);
+
+        await Follow(reply.Href, reply.External);
+        if (reply.LedgerChanged)
+            await Refresh();
+    }
+
+    private async Task Listen()
+    {
+        if (busy)
+            return;
+
+        string? spoken;
+        try
+        {
+            spoken = await JS.InvokeAsync<string>("leaseLedgerListen");
+        }
+        catch (JSException)
+        {
+            spoken = "";
+        }
+
+        if (string.IsNullOrWhiteSpace(spoken))
+        {
+            await Note("Speech recognition is not available in this browser.");
+            return;
+        }
+
+        draft = spoken;
+        await Ask();
+    }
+
+    private void Open(Guid id)
+    {
+        activeId = id;
+        inTodos = false;
+        inCalendar = false;
+        inChannel = true;
+        if (Active?.LastHref is string href)
+            Navigation.NavigateTo(href);
+    }
+
+    private void StartNew()
+    {
+        activeId = null;
+        inTodos = false;
+        inCalendar = false;
+        inChannel = true;
+    }
+
+    private async Task OpenTodos()
+    {
+        activeId = null;
+        inTodos = true;
+        inCalendar = false;
+        inChannel = true;
+        await RefreshIfIdle();
+    }
+
+    private void JumpToday() => OpenCalendar(Today);
+
+    private void OpenCalendar(DateOnly day)
+    {
+        calendarDay = day;
+        calendarMonth = new DateOnly(day.Year, day.Month, 1);
+        activeId = null;
+        inTodos = false;
+        inCalendar = true;
+        inChannel = true;
+    }
+
+    private void SelectDay(DateOnly day)
+    {
+        calendarDay = day;
+        if (day.Year != calendarMonth.Year || day.Month != calendarMonth.Month)
+            calendarMonth = new DateOnly(day.Year, day.Month, 1);
+    }
+
+    private void ShowMonth(DateOnly month)
+    {
+        calendarMonth = new DateOnly(month.Year, month.Month, 1);
+        if (calendarDay.Year == calendarMonth.Year && calendarDay.Month == calendarMonth.Month)
+            return;
+
+        calendarDay = calendarMonth.Year == Today.Year && calendarMonth.Month == Today.Month
+            ? Today
+            : calendarMonth;
+    }
+
+    private async Task Back()
+    {
+        inChannel = false;
+        inTodos = false;
+        inCalendar = false;
+        await RefreshIfIdle();
+    }
+
+    private async Task FindNewItems()
+    {
+        if (!loaded || busy)
+            return;
+
+        busy = true;
+        stickToEnd = true;
+        try
+        {
+            await ReloadLedger();
+            var result = TodoAgent.Handle("update", items, tenancies, maintenance, Snapshots(), Today, nextDue);
+            var conversation = EnsureUpdateConversation();
+            var actions = (result.Replies ?? [])
+                .Select(reply => new ChatAction("", reply.Label, false, null, reply.Group, reply.Send))
+                .ToList();
+            conversation.Turns.Add(new Turn("agent", result.Text, actions, null));
+            conversation.Preview = FirstLine(result.Text);
+            conversation.UpdatedAt = DateTime.UtcNow;
+            foreach (var reply in result.Replies ?? [])
+            {
+                if (!reply.Send.StartsWith("add suggested ", StringComparison.Ordinal))
+                    continue;
+
+                var key = reply.Send["add suggested ".Length..];
+                if (items.Any(item => item.Key.Equals(key, StringComparison.OrdinalIgnoreCase)))
+                    continue;
+
+                overrides.TryGetValue(key, out var edit);
+                overrides[key] = new TodoOverride(edit?.Title, edit?.Due, true);
+            }
+            reviewNote = FirstLine(result.Text);
+            activeId = conversation.Id;
+            inTodos = false;
+            inCalendar = false;
+            inChannel = true;
+        }
+        finally
+        {
+            busy = false;
+            await Persist();
+        }
+    }
+
+    private Conversation EnsureUpdateConversation()
+    {
+        var existing = conversations.FirstOrDefault(conversation => conversation.Title == "Calendar update");
+        if (existing is not null)
+            return existing;
+
+        var created = new Conversation { Title = "Calendar update" };
+        conversations.Add(created);
+        return created;
+    }
+
+    private async Task AcceptSuggested(string command)
+    {
+        if (busy)
+            return;
+
+        var conversation = Active ?? EnsureUpdateConversation();
+        busy = true;
+        stickToEnd = true;
+        try
+        {
+            await ReloadLedger();
+            var before = items.ToList();
+            var result = TodoAgent.Handle(command, items, tenancies, maintenance, Snapshots(), Today, nextDue);
+            ApplyCommand(before, result);
+            Replace(Shape(result.Items));
+            var added = items.FirstOrDefault(item => before.TrueForAll(old => old.Key != item.Key));
+            if (added is not null)
+                highlightedKey = added.Key;
+
+            conversation.Turns.Add(new Turn("agent", result.Text, [], null));
+            conversation.Preview = FirstLine(result.Text);
+            conversation.UpdatedAt = DateTime.UtcNow;
+            reviewNote = FirstLine(result.Text);
+            activeId = conversation.Id;
+            inTodos = false;
+            inCalendar = false;
+            inChannel = true;
+        }
+        finally
+        {
+            busy = false;
+            await Persist();
+        }
+    }
+
+    private void ForgetDeleted(string key)
+    {
+        overrides.Remove(key);
+        if (key.StartsWith("manual:", StringComparison.Ordinal))
+            overrides.Remove("chat:" + key["manual:".Length..]);
+        else if (key.StartsWith("chat:", StringComparison.Ordinal))
+            overrides.Remove("manual:" + key["chat:".Length..]);
+    }
+
+    private async Task Review()
+    {
+        if (busy)
+            return;
+
+        busy = true;
+        try
+        {
+            await ReloadLedger();
+            var result = TodoAgent.Handle("review", items, tenancies, maintenance, Snapshots(), DateOnly.FromDateTime(DateTime.Today), nextDue);
+            Replace(Shape(result.Items));
+            reviewNote = FirstLine(result.Text);
+            AddTodoNote(result.Text);
+        }
+        finally
+        {
+            busy = false;
+            await Persist();
+        }
+    }
+
+    private Task OpenItem(TodoItem item)
+    {
+        if (item.Key.StartsWith("proposal:", StringComparison.Ordinal) && item.ConversationId is Guid proposalChat)
+        {
+            Open(proposalChat);
+            return Task.CompletedTask;
+        }
+
+        if (!string.IsNullOrEmpty(item.Href))
+            return Follow(item.Href, false);
+
+        if (item.ConversationId is Guid chatId)
+            Open(chatId);
+
+        return Task.CompletedTask;
+    }
+
+    private async Task Toggle(string key)
+    {
+        var index = items.FindIndex(item => item.Key == key);
+        if (index < 0)
+            return;
+
+        items[index] = items[index] with { Done = !items[index].Done };
+        await Persist();
+    }
+
+    private static bool IsCalendarAdd(ChatAction action) =>
+        action.Send?.StartsWith("add suggested ", StringComparison.OrdinalIgnoreCase) == true;
+
+    private static string ActionClass(ChatAction action) =>
+        IsCalendarAdd(action) || string.IsNullOrEmpty(action.Send) ? "agent-action" : "agent-reply";
+
+    private bool ActionDisabled(Turn turn, ChatAction action) =>
+        busy || (!IsCalendarAdd(action) && !string.IsNullOrEmpty(action.Send) && !CanReply(turn));
+
+    private bool CanReply(Turn turn)
+    {
+        var turns = Active?.Turns;
+        return turns is { Count: > 0 } && turns[^1] == turn;
+    }
+
+    private bool CanAnswer(AgentNote note) =>
+        todoNotes.Count > 0 && todoNotes[^1] == note;
+
+    private Task AnswerTodo(TodoReply reply) => AskTodo(reply.Send, reply.Label);
+
+    private async Task Go(ChatAction action)
+    {
+        if (busy)
+            return;
+
+        if (IsCalendarAdd(action))
+        {
+            await AcceptSuggested(action.Send!);
+            return;
+        }
+
+        if (!string.IsNullOrEmpty(action.Send))
+        {
+            await SubmitChat(action.Send, action.Label);
+            return;
+        }
+
+        var conversation = Active;
+        if (conversation is not null)
+        {
+            if (action.TenancyId is Guid tenancyId)
+                conversation.TenancyId = tenancyId;
+            if (!action.External && !string.IsNullOrEmpty(action.Href))
+                conversation.LastHref = action.Href;
+        }
+
+        await Follow(action.Href, action.External);
+        await Persist();
+    }
+
+    private async Task Note(string message)
+    {
+        if (inTodos || inCalendar)
+        {
+            AddTodoNote(message);
+            await Persist();
+            return;
+        }
+
+        var conversation = EnsureActive();
+        inChannel = true;
+        if (conversation.Turns.All(turn => turn.Role != "you"))
+            conversation.Title = "Voice";
+
+        AddAgent(conversation, message, [], null);
+        await Persist();
+    }
+
+    private void AddAgent(Conversation conversation, string message, IReadOnlyList<ChatAction> actions, AssistantProposal? proposal)
+    {
+        conversation.Turns.Add(new Turn("agent", message, actions, proposal));
+        conversation.Preview = message;
+        conversation.UpdatedAt = DateTime.UtcNow;
+        stickToEnd = true;
+        Absorb();
+    }
+
+    private void AddTodoNote(string text, IReadOnlyList<TodoReply>? replies = null)
+    {
+        if (todoNotes.Count > 0 && todoNotes[^1].Role == "agent" && todoNotes[^1].Text == text && (replies is null || replies.Count == 0))
+            return;
+
+        todoNotes.Add(new AgentNote("agent", text, replies));
+        stickToEnd = true;
+    }
+
+    private async Task Download(AssistantDownload file)
+    {
+        try
+        {
+            await JS.InvokeVoidAsync("leaseLedgerDownload", file.FileName, file.Content);
+        }
+        catch (JSException)
+        {
+        }
+    }
+
+    private async Task RefreshIfIdle()
+    {
+        if (busy)
+            return;
+
+        busy = true;
+        try
+        {
+            await Refresh();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task Refresh()
+    {
+        await ReloadLedger();
+        Absorb();
+    }
+
+    private async Task ReloadLedger()
+    {
+        try
+        {
+            var dashboard = await Client.GetDashboardAsync();
+            var requests = await Client.GetMaintenanceAsync();
+            tenancies = dashboard.Tenancies;
+            maintenance = requests;
+            nextDue = dashboard.NextDueDate;
+        }
+        catch (LeaseLedgerException)
+        {
+        }
+    }
+
+    private void Absorb()
+    {
+        var before = items.Select(item => item.Key).ToHashSet(StringComparer.Ordinal);
+        var next = TodoAgent.Sync(tenancies, maintenance, Snapshots(), items, DateOnly.FromDateTime(DateTime.Today), nextDue);
+        var shaped = Shape(next);
+        var added = shaped.Where(item => !item.Done && !item.FromLedger && !before.Contains(item.Key)).ToList();
+        Replace(shaped);
+        if (added.Count == 1)
+            reviewNote = $"Added from chat: {added[0].Title}";
+        else if (added.Count > 1)
+            reviewNote = $"Added {added.Count} from chats.";
+    }
+
+    private void Replace(IReadOnlyList<TodoItem> next)
+    {
+        items.Clear();
+        items.AddRange(next);
+    }
+
+    private IReadOnlyList<TodoItem> Shape(IReadOnlyList<TodoItem> next)
+    {
+        if (overrides.Count == 0)
+            return next;
+
+        var shaped = new List<TodoItem>(next.Count);
+        foreach (var item in next)
+        {
+            if (!overrides.TryGetValue(item.Key, out var edit))
+            {
+                shaped.Add(item);
+                continue;
+            }
+
+            if (edit.Deleted)
+                continue;
+
+            shaped.Add(item with
+            {
+                Title = edit.Title ?? item.Title,
+                Due = edit.Due ?? item.Due
+            });
+        }
+
+        return shaped;
+    }
+
+    private void ApplyCommand(IReadOnlyList<TodoItem> before, TodoCommandResult result)
+    {
+        foreach (var key in result.RemovedKeys ?? [])
+            overrides[key] = new TodoOverride(null, null, true);
+
+        if (result.Text.StartsWith("Added ", StringComparison.Ordinal))
+        {
+            var prior = before.Select(item => item.Key).ToHashSet(StringComparer.Ordinal);
+            foreach (var item in result.Items.Where(item => !prior.Contains(item.Key)))
+                ForgetDeleted(item.Key);
+            return;
+        }
+
+        if (!result.Text.StartsWith("Updated ", StringComparison.Ordinal) && !result.Text.StartsWith("Moved ", StringComparison.Ordinal))
+            return;
+
+        var previous = before.ToDictionary(item => item.Key);
+        foreach (var item in result.Items)
+        {
+            if (previous.TryGetValue(item.Key, out var old) && (old.Title != item.Title || old.Due != item.Due))
+                overrides[item.Key] = new TodoOverride(item.Title, item.Due, false);
+        }
+    }
+
+    private async Task UpdateItem(TodoItem edited)
+    {
+        var title = edited.Title.Trim();
+        if (title.Length == 0)
+            return;
+
+        var index = items.FindIndex(item => item.Key == edited.Key);
+        if (index < 0)
+            return;
+
+        var next = items[index] with { Title = title, Due = edited.Due };
+        items[index] = next;
+        overrides[edited.Key] = new TodoOverride(next.Title, next.Due, false);
+        if (inCalendar)
+            SelectDay(next.Due);
+        await Persist();
+    }
+
+    private async Task DeleteItem(string key)
+    {
+        overrides[key] = new TodoOverride(null, null, true);
+        items.RemoveAll(item => item.Key == key);
+        if (highlightedKey == key)
+            highlightedKey = null;
+        await Persist();
+    }
+
+    private void ShowOnCalendar(TodoItem item)
+    {
+        highlightedKey = item.Key;
+        OpenCalendar(item.Due);
+    }
+
+    private IEnumerable<TodoItem> TodosFrom(Turn turn) =>
+        items.Where(item => !item.Done && item.TurnId == turn.Id);
+
+    private IReadOnlyList<TodoConversation> Snapshots() =>
+        conversations.Select(conversation => new TodoConversation(
+            conversation.Id,
+            conversation.Title,
+            conversation.Turns.Select(turn => new TodoTurn(
+                turn.Role,
+                turn.Text,
+                turn.ActionId is Guid actionId && !turn.Confirmed ? actionId.ToString("N") : null,
+                turn.ActionId is not null && !turn.Confirmed ? turn.ProposalSummary ?? turn.Text : null,
+                turn.Id)).ToList())).ToList();
+
+    private Conversation EnsureActive()
+    {
+        var existing = Active;
+        if (existing is not null)
+            return existing;
+
+        var created = new Conversation();
+        conversations.Add(created);
+        activeId = created.Id;
+        return created;
+    }
+
+    private async Task LoadAccount(Guid userId)
+    {
+        ready = false;
+        loaded = false;
+        conversations.Clear();
+        items.Clear();
+        overrides.Clear();
+        todoNotes.Clear();
+        activeId = null;
+        inChannel = false;
+        inTodos = false;
+        inCalendar = false;
+        reviewNote = null;
+        highlightedKey = null;
+        busy = true;
+        var restored = false;
+        try
+        {
+            if (UserId != userId)
+                return;
+
+            Restore(await Client.GetAgentHistoryAsync());
+            restored = true;
+            if (UserId != userId)
+                return;
+
+            await Refresh();
+        }
+        catch (LeaseLedgerException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        finally
+        {
+            if (UserId == userId)
+            {
+                busy = false;
+                loaded = true;
+                ready = restored;
+            }
+        }
+    }
+
+    private void Restore(AgentHistoryDto history)
+    {
+        conversations.Clear();
+        foreach (var conversation in history.Conversations)
+            conversations.Add(Conversation.From(conversation));
+
+        todoNotes.Clear();
+        foreach (var note in history.Notes)
+            todoNotes.Add(new AgentNote(note.Id, note.Role, note.Text, note.Replies));
+
+        overrides.Clear();
+        foreach (var edit in history.Overrides)
+            overrides[edit.Key] = new TodoOverride(edit.Title, edit.Due, edit.Deleted);
+
+        items.Clear();
+        items.AddRange(history.Todos);
+    }
+
+    private async Task Persist()
+    {
+        if (!ready || UserId == Guid.Empty)
+            return;
+
+        var owner = UserId;
+        await persistGate.WaitAsync();
+        try
+        {
+            if (!ready || UserId != owner)
+                return;
+
+            await Client.SaveAgentHistoryAsync(Capture());
+        }
+        catch (LeaseLedgerException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+        finally
+        {
+            persistGate.Release();
+        }
+    }
+
+    private AgentHistoryDto Capture() => new(
+        conversations
+            .Where(conversation => conversation.Turns.Count > 0)
+            .Select(conversation => new AgentConversationDto(
+                conversation.Id,
+                conversation.Title,
+                conversation.Preview,
+                conversation.LastHref,
+                conversation.TenancyId,
+                conversation.UpdatedAt,
+                conversation.Turns.Select(turn => new AgentTurnDto(
+                    turn.Id,
+                    turn.Role,
+                    turn.Text,
+                    turn.Confirmed,
+                    turn.ActionId,
+                    turn.ProposalSummary,
+                    turn.Actions.Select(action => new AgentActionDto(
+                        action.Href,
+                        action.Label,
+                        action.External,
+                        action.TenancyId,
+                        action.Group,
+                        action.Send)).ToList())).ToList()))
+            .ToList(),
+        todoNotes.Select(note => new AgentNoteDto(note.Id, note.Role, note.Text, note.Replies)).ToList(),
+        overrides.Select(edit => new AgentTodoOverrideDto(edit.Key, edit.Value.Title, edit.Value.Due, edit.Value.Deleted)).ToList(),
+        items.ToList());
+
+    private async Task Follow(string? href, bool external)
+    {
+        if (string.IsNullOrEmpty(href))
+            return;
+
+        if (external)
+        {
+            try
+            {
+                await JS.InvokeVoidAsync("open", href, "_blank", "noopener,noreferrer");
+            }
+            catch (JSException)
+            {
+            }
+
+            return;
+        }
+
+        Navigation.NavigateTo(href);
+    }
+
+    private static string TrimTitle(string text)
+    {
+        var trimmed = text.Trim();
+        return trimmed.Length <= 42 ? trimmed : trimmed[..39] + "...";
+    }
+
+    private static string FirstLine(string text)
+    {
+        var line = text.Split('\n')[0].Trim();
+        return line.Length <= 140 ? line : line[..137] + "...";
+    }
+
+    private sealed class Conversation
+    {
+        public Conversation()
+            : this(Guid.NewGuid())
+        {
+        }
+
+        private Conversation(Guid id) => Id = id;
+
+        public Guid Id { get; }
+        public string Title { get; set; } = "New conversation";
+        public string? Preview { get; set; }
+        public string? LastHref { get; set; }
+        public Guid? TenancyId { get; set; }
+        public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
+        public List<Turn> Turns { get; } = [];
+
+        public static Conversation From(AgentConversationDto dto)
+        {
+            var conversation = new Conversation(dto.Id)
+            {
+                Title = string.IsNullOrWhiteSpace(dto.Title) ? "New conversation" : dto.Title,
+                Preview = dto.Preview,
+                LastHref = dto.LastHref,
+                TenancyId = dto.TenancyId,
+                UpdatedAt = dto.UpdatedAt
+            };
+            foreach (var turn in dto.Turns)
+                conversation.Turns.Add(Turn.From(turn));
+            return conversation;
+        }
+    }
+
+    private sealed record TodoOverride(string? Title, DateOnly? Due, bool Deleted);
+
+    private sealed record ChatAction(string Href, string Label, bool External, Guid? TenancyId, string? Group, string? Send = null);
+
+    private sealed class Turn
+    {
+        public Turn(string role, string text, IReadOnlyList<ChatAction> actions, AssistantProposal? proposal)
+            : this(Guid.NewGuid(), role, text, actions, proposal?.ActionId, proposal?.Summary, false)
+        {
+        }
+
+        private Turn(Guid id, string role, string text, IReadOnlyList<ChatAction> actions, Guid? actionId, string? proposalSummary, bool confirmed)
+        {
+            Id = id;
+            Role = role;
+            Text = text;
+            Actions = actions;
+            ActionId = actionId;
+            ProposalSummary = proposalSummary;
+            Confirmed = confirmed;
+        }
+
+        public Guid Id { get; }
+        public string Role { get; }
+        public string Text { get; }
+        public IReadOnlyList<ChatAction> Actions { get; }
+        public Guid? ActionId { get; }
+        public string? ProposalSummary { get; }
+        public bool Confirmed { get; set; }
+
+        public static Turn From(AgentTurnDto dto) => new(
+            dto.Id,
+            dto.Role,
+            dto.Text,
+            dto.Actions.Select(action => new ChatAction(action.Href, action.Label, action.External, action.TenancyId, action.Group, action.Send)).ToList(),
+            dto.ActionId,
+            dto.ProposalSummary,
+            dto.Confirmed);
+    }
+
+    private sealed class AgentNote
+    {
+        public AgentNote(string role, string text, IReadOnlyList<TodoReply>? replies = null)
+            : this(Guid.NewGuid(), role, text, replies)
+        {
+        }
+
+        public AgentNote(Guid id, string role, string text, IReadOnlyList<TodoReply>? replies = null)
+        {
+            Id = id;
+            Role = role;
+            Text = text;
+            Replies = replies ?? [];
+        }
+
+        public Guid Id { get; }
+        public string Role { get; }
+        public string Text { get; }
+        public IReadOnlyList<TodoReply> Replies { get; }
+    }
+}

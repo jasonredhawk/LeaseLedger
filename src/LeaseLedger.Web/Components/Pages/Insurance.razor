@@ -1,0 +1,8 @@
+@page "/tenancies/{TenancyId:guid}/insurance"
+@rendermode AppRenderMode.Interactive
+
+<InsuranceView TenancyId="@TenancyId" />
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+}

@@ -1,0 +1,27 @@
+@if (open)
+{
+    <div class="form-workspace">
+        <div class="form-main">
+            @ChildContent
+        </div>
+        <PdfFormAside Kind="Kind" OnClose="Close" />
+    </div>
+}
+else
+{
+    <p class="actions fill-launch">
+        <button type="button" class="secondary" @onclick="Open">Fill PDF</button>
+    </p>
+    @ChildContent
+}
+
+@code {
+    [Parameter] public NoticeKind Kind { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private bool open;
+
+    private void Open() => open = true;
+
+    private void Close() => open = false;
+}

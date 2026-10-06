@@ -1,0 +1,80 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>Legal contacts · LeaseLedger</PageTitle>
+
+<header class="page-head">
+    <h1>Legal contacts</h1>
+    <p>Save a paralegal or lawyer, then refer a saved worksheet from the tenancy. Referring stores the contact on the worksheet. It does not file anything.</p>
+</header>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+@if (!string.IsNullOrEmpty(saved))
+{
+    <p class="banner ok">@saved</p>
+}
+
+<section class="panel">
+    <h2>Add a contact</h2>
+    <EditForm Model="form" OnValidSubmit="Save">
+        <div class="fields">
+            <label>Name <InputText @bind-Value="form.Name" /></label>
+            <label>Email <InputText @bind-Value="form.Email" /></label>
+            <label>Firm <InputText @bind-Value="form.Firm" /></label>
+        </div>
+        <button type="submit">Save contact</button>
+    </EditForm>
+</section>
+
+@if (contacts is null)
+{
+    <p class="muted">Loading contacts…</p>
+}
+else if (contacts.Count == 0)
+{
+    <p class="empty">No legal contacts yet.</p>
+}
+else
+{
+    <ul class="card-list">
+        @foreach (var contact in contacts)
+        {
+            <li>
+                <article class="card">
+                    <span class="card-title">@contact.Name</span>
+                    <span>@contact.Firm · @contact.Email</span>
+                </article>
+            </li>
+        }
+    </ul>
+}
+
+@code {
+    private IReadOnlyList<LegalContactDto>? contacts;
+    private readonly SaveLegalContactRequest form = new();
+    private string? error;
+    private string? saved;
+
+    protected override async Task OnInitializedAsync() => contacts = await Client.GetLegalContactsAsync();
+
+    private async Task Save()
+    {
+        error = null;
+        saved = null;
+        try
+        {
+            await Client.SaveLegalContactAsync(form);
+            form.Name = "";
+            form.Email = "";
+            form.Firm = "";
+            saved = "Contact saved.";
+            contacts = await Client.GetLegalContactsAsync();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

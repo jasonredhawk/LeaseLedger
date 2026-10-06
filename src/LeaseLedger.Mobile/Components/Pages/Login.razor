@@ -1,0 +1,54 @@
+@page "/login"
+@layout AuthLayout
+@inject IAuthClient Auth
+@inject NavigationManager Navigation
+
+<h1>Sign in</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+<EditForm Model="input" OnValidSubmit="SignIn">
+    <div class="fields">
+        <label>Email <InputText @bind-Value="input.Email" /></label>
+        <label>Password <InputText type="password" @bind-Value="input.Password" /></label>
+    </div>
+    <button type="submit">Sign in</button>
+</EditForm>
+
+<p><a href="/register">Create an account</a></p>
+
+@if (Auth.ShowDemoHints)
+{
+    <div class="demo-links">
+        <button type="button" class="secondary" @onclick='() => UseDemo("landlord@demo.local")'>Landlord demo</button>
+        <button type="button" class="secondary" @onclick='() => UseDemo("tenant@demo.local")'>Tenant demo</button>
+    </div>
+    <p class="muted">Password Demo123!. The website must be running at @LeaseLedger.Mobile.Services.ApiSettings.BaseUrl</p>
+}
+
+@code {
+    private readonly LoginRequest input = new();
+    private string? error;
+
+    private async Task SignIn()
+    {
+        var result = await Auth.LoginAsync(input);
+        if (!result.Succeeded)
+        {
+            error = result.Error;
+            return;
+        }
+
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+
+    private async Task UseDemo(string email)
+    {
+        input.Email = email;
+        input.Password = "Demo123!";
+        await SignIn();
+    }
+}

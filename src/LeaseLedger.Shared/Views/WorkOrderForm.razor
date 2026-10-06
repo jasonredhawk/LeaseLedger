@@ -1,0 +1,74 @@
+@inject ILeaseLedgerClient Client
+
+@if (Order is not null)
+{
+    <p>Trade <strong>@Order.TradeName</strong> · @Order.Trade · @Order.Phone</p>
+    @if (Order.ScheduledFor is DateOnly day)
+    {
+        <p>
+            Scheduled @TextFormat.Date(day).
+            <a href="@CalendarLink(day)" target="_blank" rel="noopener">Add to Google Calendar</a>
+        </p>
+    }
+    @if (!string.IsNullOrWhiteSpace(Order.Notes))
+    {
+        <p>@Order.Notes</p>
+    }
+}
+
+@if (CanAssign)
+{
+    <h3>Assign a trade</h3>
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="banner" role="alert">@error</p>
+    }
+    <EditForm Model="form" OnValidSubmit="Save">
+        <div class="fields">
+            <label>Name <InputText @bind-Value="form.TradeName" /></label>
+            <label>Phone <InputText @bind-Value="form.Phone" /></label>
+            <label>Trade <InputText @bind-Value="form.Trade" /></label>
+            <label>Scheduled <InputDate @bind-Value="scheduled" /></label>
+            <label>Notes <InputText @bind-Value="form.Notes" /></label>
+        </div>
+        <button type="submit">Save work order</button>
+    </EditForm>
+}
+
+@code {
+    [Parameter] public Guid RequestId { get; set; }
+    [Parameter] public string Title { get; set; } = "";
+    [Parameter] public WorkOrderDto? Order { get; set; }
+    [Parameter] public bool CanAssign { get; set; }
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private readonly AssignWorkOrderRequest form = new();
+    private DateOnly? scheduled = DateOnly.FromDateTime(DateTime.Today);
+    private string? error;
+
+    private async Task Save()
+    {
+        error = null;
+        form.ScheduledFor = scheduled;
+        try
+        {
+            await Client.AssignWorkOrderAsync(RequestId, form);
+            form.TradeName = "";
+            form.Phone = "";
+            form.Trade = "";
+            form.Notes = "";
+            await OnSaved.InvokeAsync();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private string CalendarLink(DateOnly day)
+    {
+        var end = day.AddDays(1);
+        var text = Uri.EscapeDataString($"{Order?.Trade} {Title}".Trim());
+        return $"https://calendar.google.com/calendar/render?action=TEMPLATE&text={text}&dates={day:yyyyMMdd}/{end:yyyyMMdd}";
+    }
+}

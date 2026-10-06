@@ -1,0 +1,92 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>Inspections · LeaseLedger</PageTitle>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+@if (missing)
+{
+    <p class="empty">That unit was not found.</p>
+}
+else if (log is null)
+{
+    <p class="muted">Loading inspections…</p>
+}
+else
+{
+    <header class="page-head">
+        <h1>Inspections</h1>
+        <p>@log.Street, unit @log.UnitLabel. A dated note of what was seen, so the visit is on the record.</p>
+    </header>
+
+    @if (log.CanRecord)
+    {
+        <section class="panel">
+            <h2>Record a visit</h2>
+            <EditForm Model="form" OnValidSubmit="Save">
+                <div class="fields">
+                    <label>Date <InputDate @bind-Value="form.InspectedOn" /></label>
+                    <label>Summary <InputText @bind-Value="form.Summary" /></label>
+                    <label>What you saw <InputText @bind-Value="form.Notes" /></label>
+                </div>
+                <button type="submit">Save inspection</button>
+            </EditForm>
+        </section>
+    }
+
+    @if (log.Inspections.Count == 0)
+    {
+        <p class="empty">No inspections recorded yet.</p>
+    }
+    else
+    {
+        <ol class="timeline">
+            @foreach (var visit in log.Inspections)
+            {
+                <li>
+                    <strong>@TextFormat.Date(visit.InspectedOn)</strong>
+                    <span>@visit.Summary</span>
+                    <p>@visit.Notes</p>
+                </li>
+            }
+        </ol>
+    }
+}
+
+@code {
+    [Parameter] public Guid UnitId { get; set; }
+
+    private readonly RecordInspectionRequest form = new() { InspectedOn = DateOnly.FromDateTime(DateTime.Today) };
+    private InspectionLogDto? log;
+    private bool missing;
+    private string? error;
+
+    protected override async Task OnParametersSetAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        error = null;
+        missing = false;
+        log = await Client.GetInspectionsAsync(UnitId);
+        missing = log is null;
+    }
+
+    private async Task Save()
+    {
+        error = null;
+        try
+        {
+            await Client.RecordInspectionAsync(UnitId, form);
+            form.Summary = "";
+            form.Notes = "";
+            await Reload();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

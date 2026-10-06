@@ -1,0 +1,8 @@
+@page "/notices/n2/{TenancyId:guid}"
+@rendermode AppRenderMode.Interactive
+
+<N2View TenancyId="@TenancyId" />
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+}

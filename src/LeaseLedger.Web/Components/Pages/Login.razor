@@ -1,0 +1,73 @@
+@page "/login"
+@layout AuthLayout
+@inject IAccountGateway Accounts
+@inject UserManager<AppUser> UserManager
+@inject SignInManager<AppUser> SignInManager
+@inject NavigationManager Navigation
+@inject IWebHostEnvironment Environment
+
+<h1>Sign in</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+<EditForm Model="Input" OnValidSubmit="SignIn" FormName="sign-in" method="post">
+    <DataAnnotationsValidator />
+    <div class="fields">
+        <label>Email <InputText @bind-Value="Input.Email" autocomplete="username" /></label>
+        <label>Password <InputText type="password" @bind-Value="Input.Password" autocomplete="current-password" /></label>
+    </div>
+    <button type="submit">Sign in</button>
+</EditForm>
+
+<p>Need an account? <a href="/register">Register</a></p>
+
+@if (Environment.IsDevelopment())
+{
+    <div class="demo-links">
+        <a class="button secondary" href="/account/demo-login?role=landlord" data-enhance-nav="false">Continue as landlord</a>
+        <a class="button secondary" href="/account/demo-login?role=tenant" data-enhance-nav="false">Continue as tenant</a>
+    </div>
+    <p class="muted">@DemoSeed.LandlordEmail and @DemoSeed.TenantEmail use password @DemoSeed.Password.</p>
+}
+
+@code {
+    private LoginInput input = new();
+
+    [SupplyParameterFromForm]
+    private LoginInput Input
+    {
+        get => input;
+        set => input = value ?? new();
+    }
+
+    private string? error;
+
+    private async Task SignIn()
+    {
+        var outcome = await Accounts.ValidatePasswordAsync(new LoginRequest { Email = Input.Email, Password = Input.Password });
+        if (!outcome.Succeeded || outcome.UserId is null)
+        {
+            error = outcome.Error;
+            return;
+        }
+
+        var user = await UserManager.FindByIdAsync(outcome.UserId.Value.ToString());
+        if (user is null)
+        {
+            error = "Sign-in failed.";
+            return;
+        }
+
+        await SignInManager.SignInAsync(user, isPersistent: true);
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+
+    private sealed class LoginInput
+    {
+        public string Email { get; set; } = "";
+        public string Password { get; set; } = "";
+    }
+}

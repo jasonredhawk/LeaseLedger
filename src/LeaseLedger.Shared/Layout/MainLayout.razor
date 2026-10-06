@@ -1,0 +1,105 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@inject ILeaseLedgerClient Client
+@inject IAuthClient Auth
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+
+@if (!string.IsNullOrEmpty(offline))
+{
+    <div class="app-shell">
+        <main>
+            <p class="banner" role="alert">@offline</p>
+            <p><a class="button" href="/login">Sign in</a></p>
+        </main>
+    </div>
+}
+else if (user is not null)
+{
+    <div class="app-shell with-agent">
+        <AskPanel @key="user.UserId" UserId="user.UserId" />
+        <div class="shell-body">
+            <header class="topbar">
+                <button type="button" class="back" @onclick="GoBack" disabled="@(!CanGoBack)">Back</button>
+                <a class="brand" href="/">LeaseLedger</a>
+                <nav>
+                    <NavLink href="/" Match="NavLinkMatch.All">Home</NavLink>
+                    @if (user.Role == AppRoles.Landlord)
+                    {
+                        <NavLink href="/properties">Properties</NavLink>
+                        <NavLink href="/forms">Forms</NavLink>
+                        <NavLink href="/legal">Legal</NavLink>
+                        <NavLink href="/billing">Billing</NavLink>
+                    }
+                    <NavLink href="/maintenance">Maintenance</NavLink>
+                </nav>
+                <div class="who">
+                    <span>@user.DisplayName</span>
+                    <button type="button" class="linkish" @onclick="Logout">Sign out</button>
+                </div>
+            </header>
+            <main>
+                @Body
+            </main>
+        </div>
+    </div>
+}
+
+@code {
+    private CurrentUserDto? user;
+    private string? offline;
+    private NavigationTrail? trail;
+
+    private bool CanGoBack => trail?.CanGoBack == true;
+
+    protected override void OnInitialized()
+    {
+        trail = new NavigationTrail(Navigation);
+        trail.Changed += OnTrailChanged;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            user = await Client.GetCurrentUserAsync();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            offline = exception.Message;
+            return;
+        }
+
+        if (user is null)
+            Navigation.NavigateTo("/login");
+    }
+
+    private Task Logout() => Auth.LogoutAsync();
+
+    private async Task GoBack()
+    {
+        if (trail is null || !trail.CanGoBack)
+            return;
+
+        trail.ExpectPop();
+        try
+        {
+            await JS.InvokeVoidAsync("leaseLedgerBack");
+        }
+        catch (JSException)
+        {
+            trail.CancelPop();
+        }
+    }
+
+    private void OnTrailChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        if (trail is null)
+            return;
+
+        trail.Changed -= OnTrailChanged;
+        trail.Dispose();
+    }
+}

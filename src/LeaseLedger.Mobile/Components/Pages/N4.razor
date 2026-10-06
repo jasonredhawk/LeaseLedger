@@ -1,0 +1,7 @@
+@page "/notices/n4/{TenancyId:guid}"
+
+<N4View TenancyId="@TenancyId" />
+
+@code {
+    [Parameter] public Guid TenancyId { get; set; }
+}

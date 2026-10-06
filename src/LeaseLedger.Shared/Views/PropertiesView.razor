@@ -1,0 +1,216 @@
+@inject ILeaseLedgerClient Client
+
+<PageTitle>Properties · LeaseLedger</PageTitle>
+
+<header class="page-head">
+    <h1>Properties</h1>
+    <p>Ontario units, tenant invites, and the tenancies on your ledger.</p>
+</header>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+<section class="panel">
+    <h2>Add a property</h2>
+    <EditForm Model="propertyForm" OnValidSubmit="CreateProperty">
+        <div class="fields">
+            <label>Street <InputText @bind-Value="propertyForm.Street" /></label>
+            <label>City <InputText @bind-Value="propertyForm.City" /></label>
+            <label>Postal code <InputText @bind-Value="propertyForm.PostalCode" /></label>
+            <label>Province <InputText @bind-Value="propertyForm.Province" /></label>
+        </div>
+        <p class="muted">Notice helpers calculate Ontario rules. Another province code still uses the ledger, maintenance, payments, and insurance.</p>
+        <button type="submit">Save property</button>
+    </EditForm>
+</section>
+
+@if (properties is null)
+{
+    <p class="muted">Loading properties…</p>
+}
+else if (properties.Count == 0)
+{
+    <p class="empty">No properties yet.</p>
+}
+else
+{
+    @foreach (var property in properties)
+    {
+        <article class="panel">
+            <h2>@property.Street</h2>
+            <p>@property.City, @property.Province @property.PostalCode</p>
+
+            @foreach (var unit in property.Units)
+            {
+                <section class="unit">
+                    <h3>Unit @unit.Label@(unit.IsCareHome ? " · care home" : "")</h3>
+                    <p><a href="@($"/units/{unit.Id}/inspections")">Inspection log</a></p>
+                    @if (unit.FirstOccupiedAfterNovember152018)
+                    {
+                        <p class="muted">First occupied for residential use after November 15, 2018. Guideline N1 does not apply.</p>
+                    }
+                    @if (unit.Tenancies.Count == 0)
+                    {
+                        <p class="muted">No tenancy on this unit.</p>
+                    }
+                    else
+                    {
+                        <ul class="plain">
+                            @foreach (var tenancy in unit.Tenancies)
+                            {
+                                <li>
+                                    <a href="@($"/tenancies/{tenancy.Id}")">@tenancy.TenantName</a>
+                                    · @TextFormat.Money(tenancy.RentAmount)
+                                    · <strong class="@(tenancy.Balance > 0 ? "owing" : "")">@TextFormat.Balance(tenancy.Balance)</strong>
+                                </li>
+                            }
+                        </ul>
+                    }
+
+                    @if (inviteUnitId == unit.Id)
+                    {
+                        <EditForm Model="tenancyForm" OnValidSubmit="() => CreateTenancy(unit.Id)">
+                            <div class="fields">
+                                <label>Tenant name <InputText @bind-Value="tenancyForm.TenantName" /></label>
+                                <label>Tenant email <InputText @bind-Value="tenancyForm.TenantEmail" /></label>
+                                <label>Rent <InputNumber @bind-Value="tenancyForm.RentAmount" /></label>
+                                <label>Due day <InputNumber @bind-Value="tenancyForm.RentDueDay" /></label>
+                                <label>Frequency
+                                    <InputSelect @bind-Value="tenancyForm.Frequency">
+                                        @foreach (var frequency in Enum.GetValues<RentFrequency>())
+                                        {
+                                            <option value="@frequency">@TextFormat.Frequency(frequency)</option>
+                                        }
+                                    </InputSelect>
+                                </label>
+                                <label>Start <InputDate @bind-Value="tenancyForm.StartDate" /></label>
+                                <label>Last increase <InputDate @bind-Value="lastIncrease" /></label>
+                            </div>
+                            <div class="actions">
+                                <button type="submit">Invite tenant</button>
+                                <button type="button" class="secondary" @onclick="() => inviteUnitId = null">Cancel</button>
+                            </div>
+                        </EditForm>
+                    }
+                    else
+                    {
+                        <button type="button" class="secondary" @onclick="() => OpenInvite(unit.Id)">Add tenancy</button>
+                    }
+                </section>
+            }
+
+            @if (unitPropertyId == property.Id)
+            {
+                <EditForm Model="unitForm" OnValidSubmit="() => AddUnit(property.Id)">
+                    <div class="fields">
+                        <label>Unit label <InputText @bind-Value="unitForm.Label" /></label>
+                        <label class="check">
+                            <InputCheckbox @bind-Value="unitForm.FirstOccupiedAfterNovember152018" />
+                            First occupied residentially after November 15, 2018
+                        </label>
+                        <label class="check">
+                            <InputCheckbox @bind-Value="unitForm.IsCareHome" />
+                            Care home
+                        </label>
+                    </div>
+                    <div class="actions">
+                        <button type="submit">Save unit</button>
+                        <button type="button" class="secondary" @onclick="() => unitPropertyId = null">Cancel</button>
+                    </div>
+                </EditForm>
+            }
+            else
+            {
+                <button type="button" class="secondary" @onclick="() => unitPropertyId = property.Id">Add unit</button>
+            }
+        </article>
+    }
+}
+
+@code {
+    private IReadOnlyList<PropertyDto>? properties;
+    private string? error;
+    private Guid? unitPropertyId;
+    private Guid? inviteUnitId;
+    private DateOnly? lastIncrease;
+    private readonly CreatePropertyRequest propertyForm = new();
+    private readonly CreateUnitRequest unitForm = new();
+    private readonly CreateTenancyRequest tenancyForm = new() { StartDate = DateOnly.FromDateTime(DateTime.Today), RentDueDay = 1 };
+
+    protected override async Task OnInitializedAsync() => await Reload();
+
+    private async Task Reload()
+    {
+        error = null;
+        try
+        {
+            properties = await Client.GetPropertiesAsync();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+            properties = [];
+        }
+    }
+
+    private async Task CreateProperty()
+    {
+        try
+        {
+            await Client.CreatePropertyAsync(propertyForm);
+            propertyForm.Street = "";
+            propertyForm.City = "";
+            propertyForm.PostalCode = "";
+            await Reload();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private void OpenInvite(Guid unitId)
+    {
+        inviteUnitId = unitId;
+        tenancyForm.TenantName = "";
+        tenancyForm.TenantEmail = "";
+        tenancyForm.RentAmount = 0;
+        tenancyForm.RentDueDay = 1;
+        tenancyForm.Frequency = RentFrequency.Monthly;
+        tenancyForm.StartDate = DateOnly.FromDateTime(DateTime.Today);
+        lastIncrease = null;
+    }
+
+    private async Task AddUnit(Guid propertyId)
+    {
+        try
+        {
+            await Client.AddUnitAsync(propertyId, unitForm);
+            unitForm.Label = "";
+            unitForm.FirstOccupiedAfterNovember152018 = false;
+            unitPropertyId = null;
+            await Reload();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+
+    private async Task CreateTenancy(Guid unitId)
+    {
+        try
+        {
+            tenancyForm.LastRentIncreaseDate = lastIncrease;
+            await Client.CreateTenancyAsync(unitId, tenancyForm);
+            inviteUnitId = null;
+            await Reload();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+    }
+}

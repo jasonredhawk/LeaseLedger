@@ -1,0 +1,100 @@
+<ul class="todo-list @(InThread ? "in-thread" : null)">
+    @foreach (var section in Sections)
+    {
+        <li class="todo-section @(section.Kind is TodoKind kind ? TodoAgent.KindClass(kind) : "is-done")" @key="section.Label">
+            <p class="todo-kind">@section.Label</p>
+            @foreach (var item in section.Items)
+            {
+                <div class="todo-row @TodoAgent.KindClass(item.Kind) @(item.Done ? "is-done" : null) @(item.Key == HighlightKey ? "is-highlight" : null)" @key="item.Key">
+                    <input type="checkbox" checked="@item.Done" aria-label="@item.Title" @onchange="() => OnToggle.InvokeAsync(item.Key)" />
+                    @if (editingKey == item.Key)
+                    {
+                        <form class="todo-edit" @onsubmit="Save" @onsubmit:preventDefault="true">
+                            <input aria-label="Task name" @bind="draftTitle" maxlength="160" />
+                            <input aria-label="Task date" type="date" @bind="draftDate" />
+                            <div class="todo-edit-actions">
+                                <button type="submit">Save</button>
+                                <button type="button" class="secondary" @onclick="CancelEdit">Cancel</button>
+                            </div>
+                        </form>
+                    }
+                    else
+                    {
+                        <div class="todo-copy">
+                            <button type="button" class="todo-title" @onclick="() => OnOpen.InvokeAsync(item)">
+                                <span>@item.Title</span>
+                                @if (!string.IsNullOrEmpty(item.Detail))
+                                {
+                                    <span class="todo-detail">@item.Detail</span>
+                                }
+                            </button>
+                            <button type="button" class="todo-date @(item.Due < Today && !item.Done ? "is-overdue" : null)" @onclick="() => OnDate.InvokeAsync(item.Due)">
+                                @TodoAgent.ShortDate(item.Due, Today)
+                            </button>
+                        </div>
+                        <button type="button" class="todo-tool" aria-label="@($"Edit {item.Title}")" @onclick="() => BeginEdit(item)">Edit</button>
+                        <button type="button" class="todo-x" aria-label="@($"Delete {item.Title}")" @onclick="() => OnDelete.InvokeAsync(item.Key)">×</button>
+                    }
+                </div>
+            }
+        </li>
+    }
+</ul>
+
+@code {
+    [Parameter, EditorRequired] public IReadOnlyList<TodoItem> Items { get; set; } = [];
+    [Parameter] public bool InThread { get; set; }
+    [Parameter] public bool ShowDone { get; set; }
+    [Parameter] public DateOnly Today { get; set; } = DateOnly.FromDateTime(DateTime.Today);
+    [Parameter] public string? HighlightKey { get; set; }
+    [Parameter] public EventCallback<string> OnToggle { get; set; }
+    [Parameter] public EventCallback<TodoItem> OnOpen { get; set; }
+    [Parameter] public EventCallback<DateOnly> OnDate { get; set; }
+    [Parameter] public EventCallback<string> OnDelete { get; set; }
+    [Parameter] public EventCallback<TodoItem> OnUpdate { get; set; }
+
+    private string? editingKey;
+    private string draftTitle = "";
+    private DateOnly draftDate;
+
+    private IEnumerable<(string Label, TodoKind? Kind, IReadOnlyList<TodoItem> Items)> Sections
+    {
+        get
+        {
+            var open = Items.Where(item => !item.Done).ToList();
+            foreach (var kind in TodoAgent.KindOrder)
+            {
+                var group = open.Where(item => item.Kind == kind).OrderBy(item => item.Due).ToList();
+                if (group.Count > 0)
+                    yield return (TodoAgent.KindLabel(kind), kind, group);
+            }
+
+            if (!ShowDone)
+                yield break;
+
+            var done = Items.Where(item => item.Done).OrderBy(item => item.Due).ToList();
+            if (done.Count > 0)
+                yield return ("Done", null, done);
+        }
+    }
+
+    private void BeginEdit(TodoItem item)
+    {
+        editingKey = item.Key;
+        draftTitle = item.Title;
+        draftDate = item.Due;
+    }
+
+    private void CancelEdit() => editingKey = null;
+
+    private async Task Save()
+    {
+        var item = Items.FirstOrDefault(candidate => candidate.Key == editingKey);
+        var title = draftTitle.Trim();
+        if (item is null || title.Length == 0)
+            return;
+
+        editingKey = null;
+        await OnUpdate.InvokeAsync(item with { Title = title, Due = draftDate });
+    }
+}

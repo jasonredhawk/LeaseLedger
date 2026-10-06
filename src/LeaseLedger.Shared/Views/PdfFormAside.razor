@@ -1,0 +1,211 @@
+@inject ILeaseLedgerClient Client
+@inject IJSRuntime JS
+
+<aside class="pdf-panel">
+    <div class="pdf-panel-bar">
+        <h2>@Heading</h2>
+        @if (OnClose.HasDelegate)
+        {
+            <button type="button" class="secondary" @onclick="OnClose">Close</button>
+        }
+    </div>
+    @if (!string.IsNullOrEmpty(error))
+    {
+        <p class="banner" role="alert">@error</p>
+    }
+    @if (loading)
+    {
+        <p class="muted">Loading the PDF…</p>
+    }
+    else if (preview is not null)
+    {
+        <div @ref="frame" class="pdf-frame" role="region" aria-label="@preview.FileName"></div>
+        @if (ShowMapLink && shownId is Guid id)
+        {
+            <a class="button secondary" href="@($"/forms/{id}")">Map fields</a>
+        }
+    }
+    else if (CanUpload && shownId is null)
+    {
+        <p>Upload a fillable PDF for this form. It stays beside the form, and its fields can be matched to a tenancy.</p>
+        <label>PDF
+            <InputFile OnChange="ChooseFile" accept="application/pdf,.pdf" />
+        </label>
+        <p class="muted">The PDF needs standard form fields. Scanned pages and XFA forms are skipped. Files must be 8 MB or smaller.</p>
+        <button type="button" disabled="@busy" @onclick="Upload">@(busy ? "Reading fields…" : "Upload template")</button>
+    }
+    else
+    {
+        <p class="muted">@(prompt ?? "Choose a form to see its PDF.")</p>
+    }
+</aside>
+
+@code {
+    [Parameter] public NoticeKind? Kind { get; set; }
+    [Parameter] public Guid? TemplateId { get; set; }
+    [Parameter] public PdfFileDto? File { get; set; }
+    [Parameter] public string? Title { get; set; }
+    [Parameter] public bool OfferUpload { get; set; }
+    [Parameter] public bool ShowMapLink { get; set; } = true;
+    [Parameter] public int Revision { get; set; }
+    [Parameter] public EventCallback<Guid> OnUploaded { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private PdfFileDto? preview;
+    private Guid? shownId;
+    private string? loadedKey;
+    private ElementReference frame;
+    private bool showPreview;
+    private bool loading = true;
+    private bool missing = true;
+    private bool busy;
+    private int seenRevision;
+    private string? error;
+    private string? prompt;
+    private IBrowserFile? chosen;
+
+    private string RequestKey =>
+        File is not null ? "file:" + (TemplateId?.ToString() ?? File.FileName) :
+        TemplateId is Guid templateId && templateId != Guid.Empty ? "id:" + templateId :
+        Kind is NoticeKind kind ? "kind:" + kind :
+        OfferUpload ? "upload" : "empty";
+
+    private string Heading =>
+        !string.IsNullOrWhiteSpace(Title) ? Title :
+        Kind is NoticeKind kind ? OfficialForms.Find(kind).Label :
+        preview is null ? "Form" : Path.GetFileNameWithoutExtension(preview.FileName);
+
+    private bool CanUpload => missing && (Kind is not null || OfferUpload);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Revision != seenRevision)
+        {
+            seenRevision = Revision;
+            shownId = null;
+            preview = null;
+            loadedKey = null;
+        }
+
+        if (loadedKey == RequestKey && !loading)
+            return;
+
+        if (File is not null)
+        {
+            preview = File;
+            shownId = TemplateId;
+            missing = false;
+            showPreview = true;
+            loading = false;
+            loadedKey = RequestKey;
+            return;
+        }
+
+        await LoadFromServer();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!showPreview || preview is null)
+            return;
+
+        showPreview = false;
+        await JS.InvokeVoidAsync("leaseLedgerPreview", frame, preview.Content);
+    }
+
+    private async Task LoadFromServer()
+    {
+        loading = true;
+        error = null;
+        prompt = null;
+        try
+        {
+            Guid? id = TemplateId is Guid templateId && templateId != Guid.Empty ? templateId : null;
+            if (id is null && Kind is NoticeKind kind)
+            {
+                var templates = await Client.GetPdfTemplatesAsync();
+                id = templates.FirstOrDefault(item => item.NoticeKind == kind)?.Id;
+            }
+
+            if (id is null)
+            {
+                preview = null;
+                shownId = null;
+                missing = true;
+                showPreview = false;
+                prompt = Kind is null && !OfferUpload ? "Choose a form to see its PDF." : null;
+                loadedKey = RequestKey;
+                return;
+            }
+
+            preview = await Client.GetPdfTemplateFileAsync(id.Value);
+            shownId = id;
+            missing = preview is null;
+            showPreview = preview is not null;
+            prompt = missing ? "The PDF could not be loaded." : null;
+            loadedKey = RequestKey;
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+            preview = null;
+            missing = true;
+            loadedKey = null;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    private void ChooseFile(InputFileChangeEventArgs change) => chosen = change.File;
+
+    private async Task Upload()
+    {
+        error = null;
+        if (chosen is null)
+        {
+            error = "Choose a PDF.";
+            return;
+        }
+
+        if (chosen.Size > PdfFormLimits.MaxBytes)
+        {
+            error = "That PDF is larger than 8 MB.";
+            return;
+        }
+
+        busy = true;
+        try
+        {
+            await using var stream = chosen.OpenReadStream(PdfFormLimits.MaxBytes);
+            using var buffer = new MemoryStream();
+            await stream.CopyToAsync(buffer);
+            var saved = await Client.UploadPdfTemplateAsync(new UploadPdfTemplateRequest
+            {
+                Name = Kind is NoticeKind kind ? OfficialForms.Find(kind).Label : Path.GetFileNameWithoutExtension(chosen.Name),
+                FileName = chosen.Name,
+                Content = buffer.ToArray(),
+                NoticeKind = Kind
+            });
+            shownId = null;
+            preview = null;
+            loadedKey = null;
+            await OnUploaded.InvokeAsync(saved.Id);
+            if (TemplateId is null)
+                await LoadFromServer();
+        }
+        catch (LeaseLedgerException exception)
+        {
+            error = exception.Message;
+        }
+        catch (IOException)
+        {
+            error = "That PDF is larger than 8 MB.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}

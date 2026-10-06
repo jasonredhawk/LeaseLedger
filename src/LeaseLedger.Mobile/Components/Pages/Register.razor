@@ -1,0 +1,45 @@
+@page "/register"
+@layout AuthLayout
+@inject IAuthClient Auth
+@inject NavigationManager Navigation
+
+<h1>Create an account</h1>
+
+@if (!string.IsNullOrEmpty(error))
+{
+    <p class="banner" role="alert">@error</p>
+}
+
+<EditForm Model="input" OnValidSubmit="Create">
+    <div class="fields">
+        <label>Name <InputText @bind-Value="input.DisplayName" /></label>
+        <label>Email <InputText @bind-Value="input.Email" /></label>
+        <label>Password <InputText type="password" @bind-Value="input.Password" /></label>
+        <label>I am a
+            <InputSelect @bind-Value="input.Role">
+                <option value="@AppRoles.Landlord">Landlord</option>
+                <option value="@AppRoles.Tenant">Tenant</option>
+            </InputSelect>
+        </label>
+    </div>
+    <button type="submit">Create account</button>
+</EditForm>
+
+<p><a href="/login">Sign in</a></p>
+
+@code {
+    private readonly RegisterRequest input = new();
+    private string? error;
+
+    private async Task Create()
+    {
+        var result = await Auth.RegisterAsync(input);
+        if (!result.Succeeded)
+        {
+            error = result.Error;
+            return;
+        }
+
+        Navigation.NavigateTo("/", forceLoad: true);
+    }
+}

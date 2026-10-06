@@ -1,0 +1,7 @@
+@page "/units/{UnitId:guid}/inspections"
+
+<InspectionsView UnitId="@UnitId" />
+
+@code {
+    [Parameter] public Guid UnitId { get; set; }
+}

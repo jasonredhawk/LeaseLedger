@@ -1,0 +1,7 @@
+@page "/forms/{TemplateId:guid}"
+
+<FormMapView TemplateId="TemplateId" />
+
+@code {
+    [Parameter] public Guid TemplateId { get; set; }
+}
